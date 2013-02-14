@@ -1,5 +1,5 @@
 python-dbus
 google's python api
 avconv
-pyglet
 avbin
+youtube-dl

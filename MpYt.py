@@ -17,11 +17,14 @@
 
 import os
 import sys
+import time
 import datetime
+import threading
 import httplib2
 from optparse import OptionParser
 
-import pyglet
+import wave
+import pyaudio
 
 from apiclient.discovery import build
 from oauth2client.client import OAuth2WebServerFlow
@@ -40,6 +43,43 @@ class Struct:
 
     def __repr__(self):
         return '{' + ', '.join([repr(key) + ': ' + repr(val) for key, val in self.__dict__.items()]) + '}'
+
+class Config:
+
+    CONFIGFILE = os.path.join(os.environ['HOME'], '.fcrh', '.mpris-youtube', 'conf.txt')
+
+    def __init__(self):
+
+        # setup default configure
+        config = dict()
+        config["storageDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'data')
+
+        try:
+            with open(Config.CONFIGFILE, 'r') as fin:
+                for line in fin.readlines():
+                    key, value = line.split('=', 1)
+                    config[key.strip()] = value.strip()
+            print 'Config loaded.'
+        except:
+            print "Can't load config file `%s', using default config." % Config.CONFIGFILE
+
+        self.__dict__ = config
+
+    def saveConfig(self):
+
+        if not os.path.isfile(CONFIG.CONFIGFILE):
+            print "Config file `%s' doesn't exist, creating one." % Config.CONFIGFILE
+            os.makedirs(os.path.dirname(Config.CONFIGFILE))
+
+        try:
+            with open(CONFIG.CONFIGFILE, 'w') as fout:
+                for key, value in self.__dict__.items():
+                    print >>fout, key + '=' + value
+            print "Config saved."
+        except:
+            print "Can't save config."
+
+config = Config()
 
 class Logger:
 
@@ -67,6 +107,7 @@ class Logger:
     def debug(self, msg):
         if Logger.ENABLE_DEBUG:
             self.log('DEBUG', msg)
+
 
 class APIService:
 
@@ -110,14 +151,74 @@ class APIService:
 
         return cls.__auth_instance
 
-class Cacher:
+class FileManager:
 
-    def __init__(self, config):
-        self.storageDir = config['storageDir']
-        self.logger = Logger('Cacher')
+    EXTENTIONS = ['wav']
+    DOWNLOAD_URI = 'http://www.youtube.com/watch?v=%s'
 
-    def getFile(self, fileName):
-        self.logger.warning('Cacher not implemented')
+    class _fetcher(threading.Thread):
+
+        def __init__(self, videoId, onFailed):
+            threading.Thread.__init__(self)
+            self.videoId = videoId
+            self.logger = Logger('_fetcher.%s' % videoId)
+            self.onFailed = onFailed
+
+        def run(self):
+            code = os.spawnlp(
+                    os.P_WAIT,
+                    'youtube-dl',
+                    'youtube-dl',
+                    '--quiet',
+                    '--prefer-free-formats',
+                    FileManager.DOWNLOAD_URI % self.videoId,
+                    '-o', os.path.join(config.storageDir, 'video', '%(id)s.%(ext)s'),
+                    '-x', '--audio-format', 'wav')
+
+            if code < 0:
+                self.onFailed()
+                self.logger.warning('Youtube-dl killed by signal %d' % -code)
+            elif code > 0:
+                self.onFailed()
+                self.logger.warning("Youtube-dl doesn't return 0!!")
+            else:
+                self.logger.info("prefetch video %s" % self.videoId)
+
+    def __init__(self):
+        self.logger = Logger('FileManager')
+        self.cacheSet = self.loadSet()
+        self.lock = threading.Lock()
+
+    def prefetchVedio(self, videoId):
+        if videoId not in self.cacheSet:
+            self.cacheSet.add(videoId)
+
+            def onFailed():
+                with self.lock:
+                    self.cacheSet.remove(videoId)
+            FileManager._fetcher(videoId, onFailed).start()
+
+    def getVideo(self, videoId):
+        with self.lock:
+            if videoId not in self.cacheSet:
+                raise RuntimeError("Video not in cache set.")
+
+        while True:
+            for ext in FileManager.EXTENTIONS:
+                path = os.path.join(config.storageDir, 'video', videoId + '.' + ext)
+                if os.path.isfile(path):
+                    return wave.open(path, 'rb')
+
+            time.sleep(10)
+            self.logger.info('Waiting for file to be download..')
+
+    def loadSet(self):
+        result = set()
+        for fileName in os.listdir(os.path.join(config.storageDir, 'video')):
+            videoId, ext = fileName.rsplit('.', 1)
+            if ext in FileManager.EXTENTIONS:
+                result.add(videoId)
+        return result
 
 class DBusInterface(dbus.service.Object):
 
@@ -130,7 +231,6 @@ class DBusInterface(dbus.service.Object):
 
     def __init__ (self, MpYt):
         self.MpYt = MpYt
-        self.player = MpYt.player
         self.logger = Logger('DBusInterface')
 
     # org.mpris.MediaPlayer2
@@ -146,46 +246,46 @@ class DBusInterface(dbus.service.Object):
     # org.mpris.MediaPlayer2.Player
     @dbus.service.method(IFACE_PLAYER)
     def Next(self):
-        if self.player.props['CanGoNext']:
+        if self.MpYt.player.props['CanGoNext']:
             raise NotImplementedError('Next')
 
     @dbus.service.method(IFACE_PLAYER)
     def Previous(self):
-        if self.player.props['CanGoPrevious']:
+        if self.MpYt.player.props['CanGoPrevious']:
             raise NotImplementedError('Previous')
 
     @dbus.service.method(IFACE_PLAYER)
     def Pause(self):
-        if self.player.props['CanPause']:
+        if self.MpYt.player.props['CanPause']:
             raise NotImplementedError('Pause')
 
     @dbus.service.method(IFACE_PLAYER)
     def PlayPause(self):
-        if self.player.props['CanPlayPause']:
+        if self.MpYt.player.props['CanPlayPause']:
             raise NotImplementedError('PlayPause')
         else:
             raise RuntimeError('Error')
 
     @dbus.service.method(IFACE_PLAYER)
     def Stop(self):
-        if self.player.props['CanControl']:
+        if self.MpYt.player.props['CanControl']:
             raise NotImplementedError('Stop')
         else:
             raise RuntimeError('Error')
 
     @dbus.service.method(IFACE_PLAYER)
     def Play(self):
-        if self.player.props['CanPlay']:
+        if self.MpYt.player.props['CanPlay']:
             raise NotImplementedError('Play')
 
     @dbus.service.method(IFACE_PLAYER, in_signature='x')
     def Seek(self, offset):
-        if self.player.props['CanSeek']:
+        if self.MpYt.player.props['CanSeek']:
             raise NotImplementedError('Seek')
 
     @dbus.service.method(IFACE_PLAYER, in_signature='ox')
     def SetPosition(self, trackId, position):
-        if self.player.props['CanSeek']:
+        if self.MpYt.player.props['CanSeek']:
             raise NotImplementedError('SetPosition')
 
     @dbus.service.method(IFACE_PLAYER, in_signature='s')
@@ -202,23 +302,111 @@ class DBusInterface(dbus.service.Object):
         if interface == IFACE_MAIN:
             return self.MpYt.props
         elif interface == IFACE_PLAYER:
-            return self.player.props
+            return self.MpYt.player.props
         else:
             raise RuntimeError("Key Error")
 
-class UserInterface:
+class UserInterface(threading.Thread):
 
     def __init__(self, MpYt):
+        threading.Thread.__init__(self)
         self.MpYt = MpYt
-        self.player = MpYt.player
+        self.playlistCache = dict()
+
+    def getPlaylists(self):
+        result = self.MpYt.getLists()
+        for item in result:
+            self.playlistCache[item["title"]] = item
+        return result
+
+    def getPlaylist(self, title=None):
+        if title not in self.playlistCache:
+            self.getPlaylists()
+        if title in self.playlistCache:
+            return self.playlistCache[title]
+        else:
+            return None
+
+    def run(self):
+
+        while True:
+            cmd = raw_input('>> ').split()
+            if cmd[0] == 'playlist.list':
+                print ', '.join([item["title"] for item in self.getPlaylists()])
+            elif cmd[0] == 'playlist.play':
+                listId = self.getPlaylist(cmd[1])["id"]
+                self.MpYt.player.setPlaylist(self.MpYt.getItems(listId, authenticate=False))
+                self.MpYt.player.play()
+            elif cmd[0] == 'playlistItem.list':
+                listId = self.getPlaylist(cmd[1])["id"]
+                print ', '.join([item["title"] for item in self.MpYt.getItems(listId, authenticate=False, part="snippet")])
+            elif cmd[0] == 'current.next':
+                self.MpYt.player.next()
+            elif cmd[0] == 'current.prev':
+                self.MpYt.player.prev()
+            elif cmd[0] == 'current.pause':
+                self.MpYt.player.pause()
+            elif cmd[0] == 'current.play':
+                self.MpYt.player.play()
+            elif cmd[0] == 'current.stop':
+                self.MpYt.player.stop()
 
 class Player:
 
+    audio = pyaudio.PyAudio()
+
+    class _player(threading.Thread):
+
+        def __init__ (self, wav, lock, update, finish):
+            threading.Thread.__init__(self)
+            self.daemon = True
+
+            self.wav = wav
+            self.lock = lock
+            self.playing = True
+            self.terminate = False
+            self.update = update
+            self.finish = finish
+            self.stream = Player.audio.open(
+                    format=Player.audio.get_format_from_width(wav.getsampwidth()),
+                    channels=wav.getnchannels(),
+                    rate=wav.getframerate(),
+                    output=True)
+
+            self.start()
+
+        def seek(self, offset):
+            with self.lock:
+                newPos = self.wav.tell() + int(offset * wav.getframerate() / 1000)
+                self.wav.setpos(min(newPos, self.wav.getnframes()))
+
+        def run(self):
+            while True:
+                with self.lock:
+                    if self.terminate:
+                        break
+                    if not self.playing:
+                        print '??'
+                        time.sleep(0.3)
+                        continue
+
+                    data = self.wav.readframes(2048)
+                    if data == '':
+                        self.terminate = True
+                        self.finish()
+                    else:
+                        self.stream.write(data)
+                        self.update()
+
+            self.stream.close()
+
     def __init__(self, MpYt):
         self.MpYt = MpYt
-        self._player = pyglet.media.Player()
-        self.idx = -1
+        self.idx = 0
         self.playlist = []
+        self._curPlayer = None
+        self.lock = threading.Lock()
+        self.logger = Logger('Player')
 
         self.props = dict(
                 PlaybackStatus='Stopped', # Playing, Paused, Stopped
@@ -236,41 +424,120 @@ class Player:
                 CanPause=False,
                 CanSeek=False,
                 CanControl=True)
+
+    def updateProps(self):
+        self.logger.debug('updateProps')
+        self.props["CanGoNext"] = self.idx < len(self.playlist) - 1
+        self.props["CanGoPrevious"] = self.idx > 0
+        self.props["CanPlay"] = self.idx < len(self.playlist)
+        self.props["CanPause"] = self.props["PlaybackStatus"] != 'Stopped' and self.props["CanPlay"]
+        self.props["CanSeek"] = self.props["CanPlay"] # for now
     
     def setPlaylist(self, playlist):
-        self.playlist = playlist
-        # TODO: update property
+        with self.lock:
+            self.logger.debug('setPlaylist')
+            if self.props["PlaybackStatus"] != 'Stopped':
+                self._stop()
+                self.props["PlaybackStatus"] = 'Stopped'
+            self.idx = 0
+            self.playlist = playlist
+            for item in playlist:
+                self.MpYt.fileManager.prefetchVedio(item["videoId"])
+            self.updateProps()
 
     def play(self):
-        self._player.play()
+        with self.lock:
+            self.logger.debug('play')
+            if self.props["PlaybackStatus"] == 'Playing':
+                self.logger.warning("Already running")
+                return
+
+            if self.props["PlaybackStatus"] == 'Paused':
+                with self.lock:
+                    self._curPlayer.playing = True
+            else:
+                self._spawn()
+            self.props["PlaybackStatus"] = 'Playing'
+            self.updateProps()
 
     def pause(self):
-        self._player.pause()
+        with self.lock:
+            self.logger.debug('pause')
+            if self.props["PlaybackStatus"] != 'Playing':
+                self.logger.warning("Not playing")
+            else:
+                self.props["PlaybackStatus"] = 'Paused'
+                self._curPlayer.playing = False
+                self.updateProps()
+    
+    def stop(self):
+        with self.lock:
+            self.logger.debug('stop')
+            if self.props["PlaybackStatus"] == 'Stopped':
+                self.logger.warning("Already stopped")
+            else:
+                self._stop()
+                self.idx = 0
+                self.props["PlaybackStatus"] = 'Stopped'
+                self.updateProps()
 
     def seek(self, offset):
-        self._player.seek(offset)
+        with self.lock:
+            self.logger.debug('seek %f' % offset)
+            self._curPlayer.seek(offset)
 
     def next(self):
-        self.idx += 1
-        if len(self.playlist) <= self.idx:
-            raise RuntimeError('No such song')
+        with self.lock:
+            self.logger.debug('next')
+            if self.idx + 1 >= len(self.playlist):
+                raise RuntimeError('No such song')
+            self._stop()
+            self.idx += 1
+            self._spawn()
+            self.updateProps()
 
     def prev(self):
-        self.idx -= 1
-        if self.idx < 0:
-            raise RuntimeError('No such song')
+        with self.lock:
+            self.logger.debug('prev')
+            if self.idx - 1 < 0:
+                raise RuntimeError('No such song')
+            self._stop()
+            self.idx -= 1
+            self._spawn()
+            self.updateProps()
+
+    def _spawn(self):
+        self.logger.debug('_spawn')
+
+        def finish():
+            if self.props["CanGoNext"]:
+                self.idx += 1
+                self._spawn()
+            else:
+                self.props["PlaybackStatus"] = 'Stopped'
+            self.updateProps()
+
+        def update():
+            self.props["Position"] = int(self._curPlayer.wav.tell() / self._curPlayer.wav.getframerate() * 1000)
+
+        video = self.MpYt.fileManager.getVideo(self.playlist[self.idx]["videoId"])
+        self.props["PlaybackStatus"] = 'Playing'
+        self._curPlayer = Player._player(video, self.lock, update, finish)
+
+    def _stop(self):
+        self.logger.debug('_stop')
+        self.props["Position"] = 0
+        self._curPlayer.terminate = True
 
 class MprisYoutube:
 
-    def __init__(self, options):
-        self.__dict__.update(options.__dict__)
+    def __init__(self):
         self.logger = Logger('MprisYoutube')
 
-        self.loadConfig()
         self.player = Player(self)
-        self.cacher = Cacher(self.config)
         self.userInterface = UserInterface(self)
         self.dbusInterface = DBusInterface(self)
+        self.fileManager = FileManager()
 
         self.props = dict(
                 CanQuit=True,
@@ -290,39 +557,10 @@ class MprisYoutube:
             for item in self.getItems(playlist["id"], False):
                 print '\t%s (%s, %s)' % (item["title"], item["id"], item["videoId"])
                 """
+    def run(self):
+        self.userInterface.start()
 
-    def loadConfig(self):
-
-        # setup default configure
-        self.config = dict()
-        self.config["storageDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'data')
-
-        try:
-            with open(self.configFile, 'r') as fin:
-                for line in fin.readlines():
-                    key, value = line.split('=', 1)
-                    self.config[key.strip()] = value.strip()
-            self.logger.info("Config loaded.")
-        except:
-            self.logger.warning("Can't load config file `%s', using default config." % self.configFile)
-
-        self.logger.debug('config: ' + repr(self.config))
-
-    def saveConfig(self):
-
-        if not os.path.isfile(self.configFile):
-            self.logger.info("Config file `%s' doesn't exist, creating one." % self.configFile)
-            os.makedirs(os.path.dirname(self.configFile))
-
-        try:
-            with open(self.configFile, 'w') as fout:
-                for key, value in self.config.items():
-                    print >>fout, key + '=' + value
-            self.logger.info("Config saved.")
-        except:
-            self.logger.error("Can't save config.")
-
-    def getLists(self):
+    def getLists(self, part="id,snippet,contentDetails"):
 
         token = ""
         result = []
@@ -330,7 +568,7 @@ class MprisYoutube:
 
         while True:
             listResp = youtube.playlists().list(
-                    part="id,snippet,contentDetails",
+                    part=part,
                     pageToken=token,
                     maxResults=50,
                     mine=True
@@ -348,7 +586,7 @@ class MprisYoutube:
             except:
                 return result
 
-    def getItems(self, playlistId, authenticate=True):
+    def getItems(self, playlistId, authenticate=True, part="id,snippet"):
 
         token = ""
         result = []
@@ -356,7 +594,7 @@ class MprisYoutube:
 
         while True:
             itemResp = youtube.playlistItems().list(
-                    part="id,snippet",
+                    part=part,
                     pageToken=token,
                     maxResults=50,
                     playlistId=playlistId
@@ -375,14 +613,8 @@ class MprisYoutube:
 
 def main():
 
-    parser = OptionParser()
-    parser.add_option('--config',
-            dest="configFile",
-            help="Specify the config file",
-            default=os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'conf.txt'))
-    (options, args) = parser.parse_args()
-
-    MpYt = MprisYoutube(options)
+    MpYt = MprisYoutube()
+    MpYt.run()
 
 if __name__ == "__main__":
     main()
