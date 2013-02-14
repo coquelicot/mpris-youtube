@@ -350,6 +350,8 @@ class UserInterface(threading.Thread):
                 self.MpYt.player.play()
             elif cmd[0] == 'current.stop':
                 self.MpYt.player.stop()
+            elif cmd[0] == 'current.seek':
+                self.MpYt.player.seek(int(cmd[1]))
 
 class Player:
 
@@ -375,28 +377,25 @@ class Player:
 
             self.start()
 
-        def seek(self, offset):
-            with self.lock:
-                newPos = self.wav.tell() + int(offset * wav.getframerate() / 1000)
-                self.wav.setpos(min(newPos, self.wav.getnframes()))
-
         def run(self):
             while True:
                 with self.lock:
                     if self.terminate:
                         break
-                    if not self.playing:
-                        print '??'
+                    elif not self.playing:
+                        if self.stream.is_active():
+                            self.stream.stop_stream()
                         time.sleep(0.3)
-                        continue
-
-                    data = self.wav.readframes(2048)
-                    if data == '':
-                        self.terminate = True
-                        self.finish()
                     else:
-                        self.stream.write(data)
-                        self.update()
+                        if self.stream.is_stopped():
+                            self.stream.start_stream()
+                        data = self.wav.readframes(1024)
+                        if data == '':
+                            self.terminate = True
+                            self.finish()
+                        else:
+                            self.stream.write(data)
+                            self.update()
 
             self.stream.close()
 
@@ -453,8 +452,7 @@ class Player:
                 return
 
             if self.props["PlaybackStatus"] == 'Paused':
-                with self.lock:
-                    self._curPlayer.playing = True
+                self._curPlayer.playing = True
             else:
                 self._spawn()
             self.props["PlaybackStatus"] = 'Playing'
@@ -484,7 +482,8 @@ class Player:
     def seek(self, offset):
         with self.lock:
             self.logger.debug('seek %f' % offset)
-            self._curPlayer.seek(offset)
+            newPos = self._curPlayer.wav.tell() + int(offset * self._curPlayer.wav.getframerate() / 1000)
+            self._curPlayer.wav.setpos(min(max(0, newPos), self._curPlayer.wav.getnframes()))
 
     def next(self):
         with self.lock:
@@ -520,9 +519,13 @@ class Player:
         def update():
             self.props["Position"] = int(self._curPlayer.wav.tell() / self._curPlayer.wav.getframerate() * 1000)
 
-        video = self.MpYt.fileManager.getVideo(self.playlist[self.idx]["videoId"])
-        self.props["PlaybackStatus"] = 'Playing'
-        self._curPlayer = Player._player(video, self.lock, update, finish)
+        try:
+            video = self.MpYt.fileManager.getVideo(self.playlist[self.idx]["videoId"])
+            self.props["PlaybackStatus"] = 'Playing'
+            self._curPlayer = Player._player(video, self.lock, update, finish)
+        except:
+            self.logger.warning("Something bad happened! Skipping this video instead.")
+            finish()
 
     def _stop(self):
         self.logger.debug('_stop')
