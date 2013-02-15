@@ -15,11 +15,15 @@
 # You should have received a copy of the GNU General Public License
 # along with mpris-youtube.  If not, see <http://www.gnu.org/licenses/>.
 
+import Queue
+
 import os
 import sys
 import time
 import datetime
+import thread
 import threading
+import subprocess
 import httplib2
 from optparse import OptionParser
 
@@ -53,11 +57,13 @@ class Config:
         # setup default configure
         config = dict()
         config["storageDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'data')
+        config["fetchThreads"] = 3
 
         try:
             with open(Config.CONFIGFILE, 'r') as fin:
                 for line in fin.readlines():
                     key, value = line.split('=', 1)
+                    #FIXME: what if it's a integer?
                     config[key.strip()] = value.strip()
             print 'Config loaded.'
         except:
@@ -156,51 +162,72 @@ class FileManager:
     EXTENTIONS = ['wav']
     DOWNLOAD_URI = 'http://www.youtube.com/watch?v=%s'
 
+    fetchSet = set()
+    lock = threading.Lock()
+
     class _fetcher(threading.Thread):
 
-        def __init__(self, videoId, onFailed):
+        idCnt = 0
+        requests = Queue.Queue()
+        cond = threading.Condition()
+        fnull = open(os.devnull, 'w')
+
+        def __init__(self):
             threading.Thread.__init__(self)
-            self.videoId = videoId
-            self.logger = Logger('_fetcher.%s' % videoId)
-            self.onFailed = onFailed
+            self.daemon = True
+
+            self.videoId = None
+            FileManager._fetcher.idCnt += 1
+            self.logger = Logger('_fetcher%d' % FileManager._fetcher.idCnt)
+            self.logger.info('init')
 
         def run(self):
-            code = os.spawnlp(
-                    os.P_WAIT,
-                    'youtube-dl',
+
+            while True:
+
+                FileManager._fetcher.cond.acquire()
+                while FileManager._fetcher.requests.empty():
+                    FileManager._fetcher.cond.wait()
+                self.videoId = FileManager._fetcher.requests.get()
+                FileManager._fetcher.cond.release()
+                self.logger.info('start to fetch %s' % self.videoId)
+
+                prog = [
                     'youtube-dl',
                     '--quiet',
                     '--prefer-free-formats',
                     FileManager.DOWNLOAD_URI % self.videoId,
                     '-o', os.path.join(config.storageDir, 'video', '%(id)s.%(ext)s'),
-                    '-x', '--audio-format', 'wav')
+                    '-x', '--audio-format', 'wav']
+                code = subprocess.call(prog, stdout=FileManager._fetcher.fnull, stderr=FileManager._fetcher.fnull)
 
-            if code < 0:
-                self.onFailed()
-                self.logger.warning('Youtube-dl killed by signal %d' % -code)
-            elif code > 0:
-                self.onFailed()
-                self.logger.warning("Youtube-dl doesn't return 0!!")
-            else:
-                self.logger.info("fetch video %s" % self.videoId)
+                if code == 0:
+                    self.logger.info("video %s fetched" % self.videoId)
+                else:
+                    if code < 0:
+                        self.logger.warning('Youtube-dl killed by signal %d' % -code)
+                    elif code > 0:
+                        self.logger.warning("Youtube-dl doesn't return 0!!")
+                    with FileManager.lock:
+                        FileManager.fetchSet.remove(self.videoId)
 
     def __init__(self):
         self.logger = Logger('FileManager')
-        self.cacheSet = self.loadSet()
-        self.lock = threading.Lock()
+        FileManager.fetchSet = self.loadSet()
+        while FileManager._fetcher.idCnt < config.fetchThreads:
+            FileManager._fetcher().start()
 
     def fetchVideo(self, videoId):
-        if videoId not in self.cacheSet:
-            self.cacheSet.add(videoId)
-
-            def onFailed():
-                with self.lock:
-                    self.cacheSet.remove(videoId)
-            FileManager._fetcher(videoId, onFailed).start()
+        if videoId not in self.fetchSet:
+            FileManager._fetcher.cond.acquire()
+            FileManager.fetchSet.add(videoId)
+            FileManager._fetcher.requests.put(videoId)
+            FileManager._fetcher.cond.notify()
+            FileManager._fetcher.cond.release()
 
     def getVideo(self, videoId):
-        with self.lock:
-            if videoId not in self.cacheSet:
+        with FileManager.lock:
+            if videoId not in FileManager.fetchSet:
                 raise RuntimeError("Video not in cache set.")
 
         while True:
@@ -352,6 +379,8 @@ class UserInterface(threading.Thread):
                 self.MpYt.player.stop()
             elif cmd[0] == 'current.seek':
                 self.MpYt.player.seek(int(cmd[1]))
+            elif cmd[0] == 'exit':
+                sys.exit(0)
 
 class Player:
 
@@ -562,6 +591,7 @@ class MprisYoutube:
                 """
     def run(self):
         self.userInterface.start()
+        self.userInterface.join()
 
     def getLists(self, part="id,snippet,contentDetails"):
 
@@ -618,6 +648,8 @@ def main():
 
     MpYt = MprisYoutube()
     MpYt.run()
+
+    print 'Good bye :)'
 
 if __name__ == "__main__":
     main()
