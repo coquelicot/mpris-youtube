@@ -182,14 +182,14 @@ class FileManager:
                 self.onFailed()
                 self.logger.warning("Youtube-dl doesn't return 0!!")
             else:
-                self.logger.info("prefetch video %s" % self.videoId)
+                self.logger.info("fetch video %s" % self.videoId)
 
     def __init__(self):
         self.logger = Logger('FileManager')
         self.cacheSet = self.loadSet()
         self.lock = threading.Lock()
 
-    def prefetchVedio(self, videoId):
+    def fetchVideo(self, videoId):
         if videoId not in self.cacheSet:
             self.cacheSet.add(videoId)
 
@@ -441,7 +441,7 @@ class Player:
             self.idx = 0
             self.playlist = playlist
             for item in playlist:
-                self.MpYt.fileManager.prefetchVedio(item["videoId"])
+                self.MpYt.fileManager.fetchVideo(item["videoId"])
             self.updateProps()
 
     def play(self):
