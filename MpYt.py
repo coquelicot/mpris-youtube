@@ -249,7 +249,7 @@ class FileManager:
 
 class DBusInterface(dbus.service.Object):
 
-    NAME = "org.fcrh.MpYt"
+    NAME = "org.mpris.MediaPlayer2.MpYt"
     PATH = "/org/mpris/MediaPlayer2"
     IFACE_MAIN = "org.mpris.MediaPlayer2"
     IFACE_PLAYER = "org.mpris.MediaPlayer2.Player"
@@ -259,6 +259,11 @@ class DBusInterface(dbus.service.Object):
     def __init__ (self, MpYt):
         self.MpYt = MpYt
         self.logger = Logger('DBusInterface')
+
+        self.bus = dbus.SessionBus()
+        busName = dbus.service.BusName(DBusInterface.NAME, bus=self.bus)
+        dbus.service.Object.__init__(self, busName)
+        self.add_to_connection(self.bus, DBusInterface.PATH)
 
     # org.mpris.MediaPlayer2
     @dbus.service.method(IFACE_MAIN)
@@ -274,41 +279,44 @@ class DBusInterface(dbus.service.Object):
     @dbus.service.method(IFACE_PLAYER)
     def Next(self):
         if self.MpYt.player.props['CanGoNext']:
-            raise NotImplementedError('Next')
+            self.MpYt.player.next()
 
     @dbus.service.method(IFACE_PLAYER)
     def Previous(self):
         if self.MpYt.player.props['CanGoPrevious']:
-            raise NotImplementedError('Previous')
+            self.MpYt.player.prev()
 
     @dbus.service.method(IFACE_PLAYER)
     def Pause(self):
         if self.MpYt.player.props['CanPause']:
-            raise NotImplementedError('Pause')
+            self.MpYt.player.pause()
 
     @dbus.service.method(IFACE_PLAYER)
     def PlayPause(self):
         if self.MpYt.player.props['CanPlayPause']:
-            raise NotImplementedError('PlayPause')
+            if self.MpYt.player.props['PlaybackStatus'] == 'Paused':
+                self.MpYt.player.pause()
+            else:
+                self.MpYt.player.play()
         else:
             raise RuntimeError('Error')
 
     @dbus.service.method(IFACE_PLAYER)
     def Stop(self):
         if self.MpYt.player.props['CanControl']:
-            raise NotImplementedError('Stop')
+            self.MpYt.player.stop()
         else:
             raise RuntimeError('Error')
 
     @dbus.service.method(IFACE_PLAYER)
     def Play(self):
         if self.MpYt.player.props['CanPlay']:
-            raise NotImplementedError('Play')
+            self.MpYt.player.play()
 
     @dbus.service.method(IFACE_PLAYER, in_signature='x')
     def Seek(self, offset):
         if self.MpYt.player.props['CanSeek']:
-            raise NotImplementedError('Seek')
+            self.MpYt.player.seek(offset)
 
     @dbus.service.method(IFACE_PLAYER, in_signature='ox')
     def SetPosition(self, trackId, position):
@@ -333,6 +341,20 @@ class DBusInterface(dbus.service.Object):
         else:
             raise RuntimeError("Key Error")
 
+    @dbus.service.method(IFACE_PROPERTY, in_signature='ss', out_signature='v')
+    def Get(self, interface, prop):
+        if interface == IFACE_MAIN:
+            return self.MpYt.props[prop]
+        elif interface == IFACE_PLAYER:
+            return self.MpYt.player.props[prop]
+        else:
+            raise RuntimeError("Key Error")
+
+    @dbus.service.method(IFACE_PROPERTY, in_signature='ssv')
+    def Set(self, interface, prop, value):
+        # FIXME: shoudn't pass
+        pass
+
 class UserInterface(threading.Thread):
 
     def __init__(self, MpYt):
@@ -355,6 +377,12 @@ class UserInterface(threading.Thread):
             return None
 
     def run(self):
+
+        """
+        listId = self.getPlaylist('current')["id"]
+        self.MpYt.player.setPlaylist(self.MpYt.getItems(listId, authenticate=False))
+        self.MpYt.player.play()
+        """
 
         while True:
             cmd = raw_input('>> ').split()
@@ -441,7 +469,7 @@ class Player:
                 #LoopStatusk='None', # None, Track, Playlist
                 Rate=1.0, # only 1.0 for now
                 #Shuffle=False,
-                Metadata={},
+                Metadata={}, # FIXME: should contains something
                 Volume=1.0,
                 Position=0,
                 MinimumRate=1.0,
@@ -450,6 +478,7 @@ class Player:
                 CanGoPrevious=False,
                 CanPlay=False,
                 CanPause=False,
+                CanPlayPause=False,
                 CanSeek=False,
                 CanControl=True)
 
@@ -459,6 +488,7 @@ class Player:
         self.props["CanGoPrevious"] = self.idx > 0
         self.props["CanPlay"] = self.idx < len(self.playlist)
         self.props["CanPause"] = self.props["PlaybackStatus"] != 'Stopped' and self.props["CanPlay"]
+        self.props["CanPlayPause"] = self.props["CanPlay"]
         self.props["CanSeek"] = False # for now
     
     def setPlaylist(self, playlist):
@@ -509,7 +539,6 @@ class Player:
                 self.updateProps()
 
     def seek(self, offset):
-        # FIXME: check that whether it's a stream
         with self.lock:
             self.logger.debug('seek %f' % offset)
             newPos = self._curPlayer.wav.tell() + int(offset * self._curPlayer.wav.getframerate() / 1000)
@@ -550,7 +579,15 @@ class Player:
             self.props["Position"] = int(self._curPlayer.wav.tell() / self._curPlayer.wav.getframerate() * 1000)
 
         try:
-            video = self.MpYt.fileManager.getVideo(self.playlist[self.idx]["videoId"])
+            videoId = self.playlist[self.idx]["videoId"]
+            video = self.MpYt.fileManager.getVideo(videoId)
+            youtube = APIService.instance(authenticate=False)
+            videoInfo = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]
+
+            self.props["Metadata"] = {
+                    "mpris:trackid": videoId,
+                    "mpris:artUrl": videoInfo["snippet"]["thumbnails"]["default"]["url"],
+                    "mpris:length": int(video.getnframes() / video.getframerate() * 1000)}
             self.props["PlaybackStatus"] = 'Playing'
             self._curPlayer = Player._player(video, self.lock, update, finish)
         except:
@@ -592,7 +629,6 @@ class MprisYoutube:
                 """
     def run(self):
         self.userInterface.start()
-        self.userInterface.join()
 
     def getLists(self):
 
@@ -646,9 +682,12 @@ class MprisYoutube:
                 return result
 
 def main():
-
+ 
+    gobject.threads_init()
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     MpYt = MprisYoutube()
     MpYt.run()
+    gobject.MainLoop().run()
 
     print 'Good bye :)'
 
