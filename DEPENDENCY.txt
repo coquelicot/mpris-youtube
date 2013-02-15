@@ -1,5 +1,7 @@
-python-dbus
-google's python api
-avconv
-avbin
-youtube-dl
+lib:
+    python-dbus
+    google's python api
+    youtube-dl
+tool:
+    avconv
+    ffmpeg

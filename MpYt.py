@@ -273,8 +273,7 @@ class DBusInterface(dbus.service.Object):
     @dbus.service.method(IFACE_MAIN)
     def Quit(self):
         self.logger.info('Quit')
-        # FIXME
-        thread.interrupt_main()
+        self.MpYt.loop.quit()
 
     # org.mpris.MediaPlayer2.Player
     @dbus.service.method(IFACE_PLAYER)
@@ -322,7 +321,10 @@ class DBusInterface(dbus.service.Object):
     @dbus.service.method(IFACE_PLAYER, in_signature='ox')
     def SetPosition(self, trackId, position):
         if self.MpYt.player.props['CanSeek']:
-            raise NotImplementedError('SetPosition')
+            if self.MpYt.player.props['Metadata']['mpris:trackid'] != trackId:
+                self.logger.warning("Stale request of SetPosition.")
+            else:
+                self.MpYt.player.setPos(position)
 
     @dbus.service.method(IFACE_PLAYER, in_signature='s')
     def OpenUri(self, uri):
@@ -330,7 +332,7 @@ class DBusInterface(dbus.service.Object):
 
     @dbus.service.signal(IFACE_PLAYER, signature='x')
     def Seeked(self, position):
-        pass
+        self.logger.debug('Seeked: %d (%d)' % (position, self.MpYt.player.props["Position"]))
 
     # org.freedesktop.DBus.Properties
     @dbus.service.method(IFACE_PROPERTY, in_signature='s', out_signature='a{sv}')
@@ -358,12 +360,14 @@ class DBusInterface(dbus.service.Object):
 
     @dbus.service.signal(IFACE_PROPERTY, signature='sa{sv}as')
     def PropertiesChanged(self, interface_name, changed_properties, invalidated_properties):
-        pass
+        self.logger.debug('PropChange: %s, %s'  % (interface_name, repr(changed_properties)))
 
 class UserInterface(threading.Thread):
 
     def __init__(self, MpYt):
         threading.Thread.__init__(self)
+        self.daemon = True
+
         self.MpYt = MpYt
         self.playlistCache = dict()
 
@@ -413,8 +417,7 @@ class UserInterface(threading.Thread):
             elif cmd[0] == 'current.seek':
                 self.MpYt.player.seek(int(cmd[1]))
             elif cmd[0] == 'exit':
-                # FIXME
-                thread.interrupt_main()
+                self.MpYt.loop.quit()
 
 class Player:
 
@@ -457,6 +460,14 @@ class Player:
             newPos = self.wav.tell() + int(offset * self.wav.getframerate() / 1000)
             self.wav.setpos(min(max(0, newPos), self.wav.getnframes()))
 
+        def setPos(self, pos):
+            newPos = int(pos * self.wav.getframerate() / 1000)
+            if newPos >= 0 and newPos <= self.wav.getnframes():
+                self.wav.setpos(newPos)
+
+        def getPos(self):
+            return int(self.wav.tell() * 1000 / self.wav.getframerate())
+
         def run(self):
             while True:
 
@@ -488,16 +499,16 @@ class Player:
                 Rate=1.0, # only 1.0 for now
                 #Shuffle=False,
                 Metadata=dbus.Dictionary(signature='sv'), # FIXME: should contains something
-                Volume=1.0,
-                Position=0,
-                MinimumRate=1.0,
-                MaximumRate=1.0,
+                Volume=0.5,
+                Position=0L,
+                MinimumRate=0.5,
+                MaximumRate=0.5,
                 CanGoNext=False,
                 CanGoPrevious=False,
                 CanPlay=False,
                 CanPause=False,
                 CanPlayPause=False,
-                CanSeek=False,
+                CanSeek=True,
                 CanControl=True)
         self._copyProps = self.props.copy()
 
@@ -510,22 +521,20 @@ class Player:
         self.props["CanPlay"] = self.idx < len(self.playlist)
         self.props["CanPause"] = self.props["PlaybackStatus"] != 'Stopped' and self.props["CanPlay"]
         self.props["CanPlayPause"] = self.props["CanPlay"]
-        self.props["CanSeek"] = False # for now
+        self.props["CanSeek"] = True # for now
 
         changeDict = dict()
         for key, value in self.props.items():
             if value != self._copyProps[key]:
                 changeDict[key] = value
                 self._copyProps[key] = value
-        print changeDict
         self.MpYt.dbusInterface.PropertiesChanged(DBusInterface.IFACE_PLAYER, changeDict, dbus.Array(signature='s'))
     
     def setPlaylist(self, playlist, playlistInfo=None):
         with self.lock:
             self.logger.debug('setPlaylist')
             if self.props["PlaybackStatus"] != 'Stopped':
-                self._stop()
-                self.props["PlaybackStatus"] = 'Stopped'
+                self.stop()
             self.idx = 0
             self.playlist = playlist
             self.playlistInfo = playlistInfo
@@ -570,15 +579,29 @@ class Player:
 
     def seek(self, offset):
         with self.lock:
-            self.logger.debug('seek %f' % offset)
-            self._player.seek(offset)
+            if self.props["CanSeek"]:
+                self.logger.debug('seek %d' % offset)
+                self._player.seek(offset)
+                self.updateCallback() # FIXME: not so appropriate
+                self.MpYt.dbusInterface.Seeked(dbus.Int64(self._player.getPos()))
+            else:
+                raise RuntimeError("Can't seek")
+
+    def setPos(self, pos):
+        with self.lock:
+            if self.props["CanSeek"]:
+                self.logger.debug('setPos %d' % pos)
+                self._player.setPos(pos)
+                self.updateCallback() # FIXME: not so appropriate
+                self.MpYt.dbusInterface.Seeked(dbus.Int64(self._player.getPos()))
+            else:
+                raise RuntimeError("Can't setPos")
 
     def next(self):
         with self.lock:
             self.logger.debug('next')
             if self.idx + 1 >= len(self.playlist):
                 raise RuntimeError('No such song')
-            self._stop()
             self.idx += 1
             self._spawn()
             self.updateProps()
@@ -588,7 +611,6 @@ class Player:
             self.logger.debug('prev')
             if self.idx - 1 < 0:
                 raise RuntimeError('No such song')
-            self._stop()
             self.idx -= 1
             self._spawn()
             self.updateProps()
@@ -602,7 +624,7 @@ class Player:
         self.updateProps()
 
     def updateCallback(self):
-        self.props["Position"] = int(self._player.wav.tell() / self._player.wav.getframerate() * 1000)
+        self.props["Position"] = long(self._player.getPos())
 
     def _spawn(self):
         self.logger.debug('_spawn')
@@ -622,22 +644,25 @@ class Player:
             if self.playlistInfo is not None:
                 # using playlist's title instread
                 self.props["Metadata"]["xesam:album"] = dbus.UTF8String(self.playlistInfo["title"].encode('utf-8'), variant_level=1)
+            self.props["Position"] = 0L
             self.props["PlaybackStatus"] = 'Playing'
             self._player.playWave(video)
-        except Exception as e:
-            print e
+        except:
             self.logger.warning("Something bad happened! Skipping this video instead.")
             self.finishCallback()
 
     def _stop(self):
         self.logger.debug('_stop')
-        self.props["Position"] = 0
+        self.props["Position"] = 0L
         self._player.pause()
 
 class MprisYoutube:
 
     def __init__(self):
         self.logger = Logger('MprisYoutube')
+        gobject.threads_init()
+        dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+        self.loop = gobject.MainLoop()
 
         self.player = Player(self)
         self.userInterface = UserInterface(self)
@@ -645,15 +670,15 @@ class MprisYoutube:
         self.fileManager = FileManager()
 
         self.props = dict(
-                CanQuit=False,
+                CanQuit=True,
                 #FullScreen=False,
                 #CanSetFullscreen,
                 CanRaise=False,
-                HasTrackList=True,
+                HasTrackList=False,
                 Identity='mpris-youtube',
                 #DesktopEntry='What is this?',
                 SupportedUriSchemes=dbus.Array(signature='s'), # can't open uri from outside
-                SupportedMimeTypes=['application/x-flash-video'])
+                SupportedMimeTypes=['audio/wav'])
 
         """
         for playlist in self.getLists():
@@ -664,6 +689,10 @@ class MprisYoutube:
                 """
     def run(self):
         self.userInterface.start()
+        try:
+            self.loop.run()
+        except:
+            self.loop.quit()
 
     def getLists(self):
 
@@ -716,16 +745,7 @@ class MprisYoutube:
             except:
                 return result
 
-def main():
- 
-    gobject.threads_init()
-    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-    MpYt = MprisYoutube()
-    MpYt.run()
-    gobject.MainLoop().run()
-
-    print 'Good bye :)'
-
 if __name__ == "__main__":
-    main()
+    MprisYoutube().run()
+    print 'Good bye :)'
 
