@@ -296,9 +296,9 @@ class DBusInterface(dbus.service.Object):
     def PlayPause(self):
         if self.MpYt.player.props['CanPlayPause']:
             if self.MpYt.player.props['PlaybackStatus'] == 'Paused':
-                self.MpYt.player.pause()
-            else:
                 self.MpYt.player.play()
+            else:
+                self.MpYt.player.pause()
         else:
             raise RuntimeError('Error')
 
