@@ -422,47 +422,63 @@ class Player:
 
     class _player(threading.Thread):
 
-        def __init__ (self, wav, lock, update, finish):
+        def __init__ (self, lock, update, finish):
             threading.Thread.__init__(self)
             self.daemon = True
 
-            self.wav = wav
-            self.lock = lock
-            self.terminate = False
+            self.wav = None
             self.update = update
             self.finish = finish
+            self.stream = None
+            self.cond = threading.Condition(lock)
+
+            self.start()
+
+        def playWave(self, wav):
+            if self.stream is not None:
+                self.stream.close()
+
+            self.wav = wav
             self.stream = Player.audio.open(
                     format=Player.audio.get_format_from_width(wav.getsampwidth()),
                     channels=wav.getnchannels(),
                     rate=wav.getframerate(),
                     output=True)
+            self.cond.notify()
 
-            self.start()
+        def pause(self):
+            self.stream.stop_stream()
+
+        def resume(self):
+            self.stream.start_stream()
+            self.cond.notify()
+
+        def seek(self, offset):
+            newPos = self.wav.tell() + int(offset * self.wav.getframerate() / 1000)
+            self.wav.setpos(min(max(0, newPos), self.wav.getnframes()))
 
         def run(self):
             while True:
-                with self.lock:
-                    if self.terminate:
-                        break
-                    elif not self.stream.is_active():
-                        time.sleep(0.3)
-                    else:
-                        data = self.wav.readframes(1024)
-                        if data == '':
-                            self.terminate = True
-                            self.finish()
-                        else:
-                            self.stream.write(data)
-                            self.update()
 
-            self.stream.close()
+                self.cond.acquire()
+                while self.stream is None or self.stream.is_stopped():
+                    self.cond.wait()
+
+                data = self.wav.readframes(1024)
+                if data == '':
+                    self.stream.close()
+                    self.stream = None
+                    self.finish()
+                else:
+                    self.stream.write(data)
+                    self.update()
+                self.cond.release()
 
     def __init__(self, MpYt):
         self.MpYt = MpYt
         self.idx = 0
         self.playlist = []
         self.playlistInfo = None
-        self._curPlayer = None
         self.lock = threading.Lock()
         self.logger = Logger('Player')
 
@@ -484,6 +500,8 @@ class Player:
                 CanSeek=False,
                 CanControl=True)
         self._copyProps = self.props.copy()
+
+        self._player = Player._player(self.lock, self.updateCallback, self.finishCallback)
 
     def updateProps(self):
         self.logger.debug('updateProps')
@@ -522,9 +540,9 @@ class Player:
                 self.logger.warning("Already running")
                 return
 
-            self.props["PlaybackStatus"] = 'Playing'
             if self.props["PlaybackStatus"] == 'Paused':
-                self._curPlayer.stream.start_stream()
+                self._player.resume()
+                self.props["PlaybackStatus"] = 'Playing'
             else:
                 self._spawn()
             self.updateProps()
@@ -536,7 +554,7 @@ class Player:
                 self.logger.warning("Not playing")
             else:
                 self.props["PlaybackStatus"] = 'Paused'
-                self._curPlayer.stream.stop_stream()
+                self._player.pause()
                 self.updateProps()
     
     def stop(self):
@@ -553,8 +571,7 @@ class Player:
     def seek(self, offset):
         with self.lock:
             self.logger.debug('seek %f' % offset)
-            newPos = self._curPlayer.wav.tell() + int(offset * self._curPlayer.wav.getframerate() / 1000)
-            self._curPlayer.wav.setpos(min(max(0, newPos), self._curPlayer.wav.getnframes()))
+            self._player.seek(offset)
 
     def next(self):
         with self.lock:
@@ -576,20 +593,19 @@ class Player:
             self._spawn()
             self.updateProps()
 
+    def finishCallback(self):
+        self.idx += 1
+        if self.props["CanGoNext"]:
+            self._spawn()
+        else:
+            self.props["PlaybackStatus"] = 'Stopped'
+        self.updateProps()
+
+    def updateCallback(self):
+        self.props["Position"] = int(self._player.wav.tell() / self._player.wav.getframerate() * 1000)
+
     def _spawn(self):
         self.logger.debug('_spawn')
-
-        def finish():
-            self.idx += 1
-            if self.props["CanGoNext"]:
-                self.updateProps()
-                self._spawn()
-            else:
-                self.props["PlaybackStatus"] = 'Stopped'
-                self.updateProps()
-
-        def update():
-            self.props["Position"] = int(self._curPlayer.wav.tell() / self._curPlayer.wav.getframerate() * 1000)
 
         try:
             videoId = self.playlist[self.idx]["videoId"]
@@ -607,16 +623,16 @@ class Player:
                 # using playlist's title instread
                 self.props["Metadata"]["xesam:album"] = dbus.UTF8String(self.playlistInfo["title"].encode('utf-8'), variant_level=1)
             self.props["PlaybackStatus"] = 'Playing'
-            self._curPlayer = Player._player(video, self.lock, update, finish)
+            self._player.playWave(video)
         except Exception as e:
             print e
             self.logger.warning("Something bad happened! Skipping this video instead.")
-            finish()
+            self.finishCallback()
 
     def _stop(self):
         self.logger.debug('_stop')
         self.props["Position"] = 0
-        self._curPlayer.terminate = True
+        self._player.pause()
 
 class MprisYoutube:
 
