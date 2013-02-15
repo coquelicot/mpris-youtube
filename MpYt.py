@@ -534,7 +534,9 @@ class Player:
         with self.lock:
             self.logger.debug('setPlaylist')
             if self.props["PlaybackStatus"] != 'Stopped':
-                self.stop()
+                self._stop()
+                self.props["PlaybackStatus"] = 'Stopped'
+                self.updateProps()
             self.idx = 0
             self.playlist = playlist
             self.playlistInfo = playlistInfo
