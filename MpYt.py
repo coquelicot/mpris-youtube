@@ -57,6 +57,7 @@ class Config:
         # setup default configure
         config = dict()
         config["storageDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'data')
+        config["runtimeDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'var')
         config["fetchThreads"] = 3
 
         try:
@@ -164,13 +165,13 @@ class FileManager:
 
     fetchSet = set()
     lock = threading.Lock()
+    fnull = open(os.devnull, 'w')
 
     class _fetcher(threading.Thread):
 
         idCnt = 0
         requests = Queue.Queue()
         cond = threading.Condition()
-        fnull = open(os.devnull, 'w')
 
         def __init__(self):
             threading.Thread.__init__(self)
@@ -199,7 +200,7 @@ class FileManager:
                     FileManager.DOWNLOAD_URI % self.videoId,
                     '-o', os.path.join(config.storageDir, 'video', '%(id)s.%(ext)s'),
                     '-x', '--audio-format', 'wav']
-                code = subprocess.call(prog, stdout=FileManager._fetcher.fnull, stderr=FileManager._fetcher.fnull)
+                code = subprocess.call(prog, stdout=FileManager.fnull, stderr=FileManager.fnull)
 
                 if code == 0:
                     self.logger.info("video %s fetched" % self.videoId)
@@ -226,18 +227,17 @@ class FileManager:
             FileManager._fetcher.cond.release()
 
     def getVideo(self, videoId):
-        with FileManager.lock:
-            if videoId not in FileManager.fetchSet:
-                raise RuntimeError("Video not in cache set.")
-
         while True:
+            with FileManager.lock:
+                if videoId not in FileManager.fetchSet:
+                    raise RuntimeError("Video not in cache set.")
+
             for ext in FileManager.EXTENTIONS:
                 path = os.path.join(config.storageDir, 'video', videoId + '.' + ext)
                 if os.path.isfile(path):
                     return wave.open(path, 'rb')
-
+            self.logger.info("Waiting for video to be fetch..")
             time.sleep(10)
-            self.logger.info('Waiting for file to be download..')
 
     def loadSet(self):
         result = set()
@@ -366,7 +366,7 @@ class UserInterface(threading.Thread):
                 self.MpYt.player.play()
             elif cmd[0] == 'playlistItem.list':
                 listId = self.getPlaylist(cmd[1])["id"]
-                print ', '.join([item["title"] for item in self.MpYt.getItems(listId, authenticate=False, part="snippet")])
+                print ', '.join([item["title"] for item in self.MpYt.getItems(listId, authenticate=False)])
             elif cmd[0] == 'current.next':
                 self.MpYt.player.next()
             elif cmd[0] == 'current.prev':
@@ -459,7 +459,7 @@ class Player:
         self.props["CanGoPrevious"] = self.idx > 0
         self.props["CanPlay"] = self.idx < len(self.playlist)
         self.props["CanPause"] = self.props["PlaybackStatus"] != 'Stopped' and self.props["CanPlay"]
-        self.props["CanSeek"] = self.props["CanPlay"] # for now
+        self.props["CanSeek"] = False # for now
     
     def setPlaylist(self, playlist):
         with self.lock:
@@ -509,6 +509,7 @@ class Player:
                 self.updateProps()
 
     def seek(self, offset):
+        # FIXME: check that whether it's a stream
         with self.lock:
             self.logger.debug('seek %f' % offset)
             newPos = self._curPlayer.wav.tell() + int(offset * self._curPlayer.wav.getframerate() / 1000)
@@ -593,7 +594,7 @@ class MprisYoutube:
         self.userInterface.start()
         self.userInterface.join()
 
-    def getLists(self, part="id,snippet,contentDetails"):
+    def getLists(self):
 
         token = ""
         result = []
@@ -601,7 +602,7 @@ class MprisYoutube:
 
         while True:
             listResp = youtube.playlists().list(
-                    part=part,
+                    part="id,snippet,contentDetails",
                     pageToken=token,
                     maxResults=50,
                     mine=True
@@ -619,7 +620,7 @@ class MprisYoutube:
             except:
                 return result
 
-    def getItems(self, playlistId, authenticate=True, part="id,snippet"):
+    def getItems(self, playlistId, authenticate=True):
 
         token = ""
         result = []
@@ -627,7 +628,7 @@ class MprisYoutube:
 
         while True:
             itemResp = youtube.playlistItems().list(
-                    part=part,
+                    part="id,snippet",
                     pageToken=token,
                     maxResults=50,
                     playlistId=playlistId
