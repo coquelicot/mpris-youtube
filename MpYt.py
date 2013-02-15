@@ -428,7 +428,6 @@ class Player:
 
             self.wav = wav
             self.lock = lock
-            self.playing = True
             self.terminate = False
             self.update = update
             self.finish = finish
@@ -445,13 +444,9 @@ class Player:
                 with self.lock:
                     if self.terminate:
                         break
-                    elif not self.playing:
-                        if self.stream.is_active():
-                            self.stream.stop_stream()
+                    elif not self.stream.is_active():
                         time.sleep(0.3)
                     else:
-                        if self.stream.is_stopped():
-                            self.stream.start_stream()
                         data = self.wav.readframes(1024)
                         if data == '':
                             self.terminate = True
@@ -529,7 +524,7 @@ class Player:
 
             self.props["PlaybackStatus"] = 'Playing'
             if self.props["PlaybackStatus"] == 'Paused':
-                self._curPlayer.playing = True
+                self._curPlayer.stream.start_stream()
             else:
                 self._spawn()
             self.updateProps()
@@ -541,7 +536,7 @@ class Player:
                 self.logger.warning("Not playing")
             else:
                 self.props["PlaybackStatus"] = 'Paused'
-                self._curPlayer.playing = False
+                self._curPlayer.stream.stop_stream()
                 self.updateProps()
     
     def stop(self):
