@@ -308,7 +308,7 @@ class DBusInterface(dbus.service.Object):
     IFACE_MAIN = "org.mpris.MediaPlayer2"
     IFACE_PLAYER = "org.mpris.MediaPlayer2.Player"
     IFACE_PLAYLISTS = "org.mpris.MediaPlayer2.Playlists"
-    IFACE_TRACKLIST = "org.mpris.MediaPlayer2.Tracklist"
+    IFACE_TRACKLIST = "org.mpris.MediaPlayer2.TrackList"
     IFACE_PROPERTY = "org.freedesktop.DBus.Properties"
 
     def __init__ (self, MpYt):
@@ -403,7 +403,7 @@ class DBusInterface(dbus.service.Object):
     def PlaylistChanged(self, playlist):
         self.logger.info('Playlist changed: %s' % repr(playlist))
 
-    # org.mpris.MediaPlayer2.Tracklist
+    # org.mpris.MediaPlayer2.TrackList
     @dbus.service.method(IFACE_TRACKLIST, in_signature='ao', out_signature='aa{sv}')
     def GetTracksMetadata(self, tracks):
         raise NotImplementedError('GetTracksMetadata')
@@ -411,12 +411,12 @@ class DBusInterface(dbus.service.Object):
     @dbus.service.method(IFACE_TRACKLIST, in_signature='sob')
     def AddTrack(self, url, afterTrack, setAsCurrent):
         if self.MpYt.player.trackProps['CanEditTracks']:
-            raise NotImplementedError('AddTrack')
+            raise NotImplementedError('AddTrack (should not happend)')
 
     @dbus.service.method(IFACE_TRACKLIST, in_signature='o')
     def RemoveTrack(self, trackId):
         if self.MpYt.player.trackProps['CanEditTracks']:
-            raise NotImplementedError('RemoveTrack')
+            raise NotImplementedError('RemoveTrack (should not happend)')
 
     @dbus.service.method(IFACE_TRACKLIST, in_signature='o')
     def GoTo(self, trackId):
