@@ -158,6 +158,59 @@ class APIService:
 
         return cls.__auth_instance
 
+    @classmethod
+    def getLists(cls):
+
+        token = ""
+        result = []
+        youtube = cls.instance(authenticate=True)
+
+        while True:
+            listResp = youtube.playlists().list(
+                    part="id,snippet,contentDetails",
+                    pageToken=token,
+                    maxResults=50,
+                    mine=True
+                    ).execute()
+            for item in listResp["items"]:
+                element = dict(
+                        id=item["id"],
+                        title=item["snippet"]["title"],
+                        description=item["snippet"]["description"],
+                        itemCount=item["contentDetails"]["itemCount"])
+                result.append(element)
+
+            try:
+                token = listResp["nextPageToken"]
+            except:
+                return result
+
+    @classmethod
+    def getItems(cls, playlistId, authenticate=True):
+
+        token = ""
+        result = []
+        youtube = cls.instance(authenticate=authenticate)
+
+        while True:
+            itemResp = youtube.playlistItems().list(
+                    part="id,snippet",
+                    pageToken=token,
+                    maxResults=50,
+                    playlistId=playlistId
+                    ).execute()
+            for item in itemResp["items"]:
+                element = dict(
+                        id=item["id"],
+                        title=item["snippet"]["title"],
+                        videoId=item["snippet"]["resourceId"]["videoId"])
+                result.append(element)
+
+            try:
+                token = itemResp["nextPageToken"]
+            except:
+                return result
+
 class FileManager:
 
     EXTENTIONS = ['wav']
@@ -372,7 +425,7 @@ class UserInterface(threading.Thread):
         self.playlistCache = dict()
 
     def getPlaylists(self):
-        result = self.MpYt.getLists()
+        result = APIService.getLists()
         for item in result:
             self.playlistCache[item["title"]] = item
         return result
@@ -387,23 +440,17 @@ class UserInterface(threading.Thread):
 
     def run(self):
 
-        """
-        listId = self.getPlaylist('current')["id"]
-        self.MpYt.player.setPlaylist(self.MpYt.getItems(listId, authenticate=False))
-        self.MpYt.player.play()
-        """
-
         while True:
             cmd = raw_input('>> ').split()
             if cmd[0] == 'playlist.list':
                 print ', '.join([item["title"] for item in self.getPlaylists()])
             elif cmd[0] == 'playlist.play':
                 objList = self.getPlaylist(cmd[1])
-                self.MpYt.player.setPlaylist(self.MpYt.getItems(objList["id"], authenticate=False), objList)
+                self.MpYt.player.setPlaylist(APIService.getItems(objList["id"], authenticate=False), objList)
                 self.MpYt.player.play()
             elif cmd[0] == 'playlistItem.list':
                 listId = self.getPlaylist(cmd[1])["id"]
-                print ', '.join([item["title"] for item in self.MpYt.getItems(listId, authenticate=False)])
+                print ', '.join([item["title"] for item in APIService.getItems(listId, authenticate=False)])
             elif cmd[0] == 'current.next':
                 self.MpYt.player.next()
             elif cmd[0] == 'current.prev':
@@ -682,70 +729,12 @@ class MprisYoutube:
                 SupportedUriSchemes=dbus.Array(signature='s'), # can't open uri from outside
                 SupportedMimeTypes=['audio/wav'])
 
-        """
-        for playlist in self.getLists():
-            print 'list %s:' % playlist["title"]
-
-            for item in self.getItems(playlist["id"], False):
-                print '\t%s (%s, %s)' % (item["title"], item["id"], item["videoId"])
-                """
     def run(self):
         self.userInterface.start()
         try:
             self.loop.run()
         except:
             self.loop.quit()
-
-    def getLists(self):
-
-        token = ""
-        result = []
-        youtube = APIService.instance(authenticate=True)
-
-        while True:
-            listResp = youtube.playlists().list(
-                    part="id,snippet,contentDetails",
-                    pageToken=token,
-                    maxResults=50,
-                    mine=True
-                    ).execute()
-            for item in listResp["items"]:
-                element = dict(
-                        id=item["id"],
-                        title=item["snippet"]["title"],
-                        description=item["snippet"]["description"],
-                        itemCount=item["contentDetails"]["itemCount"])
-                result.append(element)
-
-            try:
-                token = listResp["nextPageToken"]
-            except:
-                return result
-
-    def getItems(self, playlistId, authenticate=True):
-
-        token = ""
-        result = []
-        youtube = APIService.instance(authenticate=authenticate)
-
-        while True:
-            itemResp = youtube.playlistItems().list(
-                    part="id,snippet",
-                    pageToken=token,
-                    maxResults=50,
-                    playlistId=playlistId
-                    ).execute()
-            for item in itemResp["items"]:
-                element = dict(
-                        id=item["id"],
-                        title=item["snippet"]["title"],
-                        videoId=item["snippet"]["resourceId"]["videoId"])
-                result.append(element)
-
-            try:
-                token = itemResp["nextPageToken"]
-            except:
-                return result
 
 if __name__ == "__main__":
     MprisYoutube().run()
