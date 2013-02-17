@@ -441,8 +441,7 @@ class UserInterface(threading.Thread):
             if cmd[0] == 'playlist.list':
                 print ', '.join([item.title for item in Playlist.getLists(fetchItem=False)])
             elif cmd[0] == 'playlist.play':
-                objList = APIService.getList(title=cmd[1])
-                self.MpYt.player.setPlaylist(APIService.getItems(objList["id"], authenticate=False), objList)
+                self.MpYt.player.setPlaylist(Playlist.getList(title=cmd[1], fetchItem=True))
                 self.MpYt.player.play()
             elif cmd[0] == 'playlistItem.list':
                 print ', '.join([item.title for item in Playlist.getList(title=cmd[1], fetchItem=True).audios])
@@ -614,7 +613,7 @@ class Player:
                 self._copyProps[key] = value
         self.MpYt.dbusInterface.PropertiesChanged(DBusInterface.IFACE_PLAYER, changeDict, dbus.Array(signature='s'))
     
-    def setPlaylist(self, playlist, playlistInfo=None):
+    def setPlaylist(self, playlist):
         with self.lock:
             self.logger.debug('setPlaylist')
             if self.props["PlaybackStatus"] != 'Stopped':
@@ -622,10 +621,10 @@ class Player:
                 self.props["PlaybackStatus"] = 'Stopped'
                 self.updateProps()
             self.idx = 0
-            self.playlist = playlist
-            self.playlistInfo = playlistInfo
-            for item in playlist:
-                self.MpYt.fileManager.fetchVideo(item["snippet"]["resourceId"]["videoId"])
+            self.playlist = playlist.audios
+            self.playlistInfo = playlist
+            for item in self.playlist:
+                self.MpYt.fileManager.fetchVideo(item.videoId)
             self.updateProps()
 
     def play(self):
@@ -716,7 +715,7 @@ class Player:
         self.logger.debug('_spawn')
 
         try:
-            videoId = self.playlist[self.idx]["snippet"]["resourceId"]["videoId"]
+            videoId = self.playlist[self.idx].videoId
             video = self.MpYt.fileManager.getVideo(videoId)
             youtube = APIService.instance(authenticate=False)
             videoInfo = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]
@@ -726,10 +725,9 @@ class Player:
                     "mpris:artUrl": dbus.UTF8String(videoInfo["snippet"]["thumbnails"]["default"]["url"].encode('utf-8'), variant_level=1),
                     "mpris:length": dbus.Int64(video.getnframes() / video.getframerate() * 1000, variant_level=1),
                     "xesam:title": dbus.UTF8String(videoInfo["snippet"]["title"].encode('utf-8'), variant_level=1),
+                    # using playlist's title instread
+                    "xesam:album": dbus.UTF8String(self.playlistInfo.title.encode('utf-8'), variant_level=1)
                     }
-            if self.playlistInfo is not None:
-                # using playlist's title instread
-                self.props["Metadata"]["xesam:album"] = dbus.UTF8String(self.playlistInfo["snippet"]["title"].encode('utf-8'), variant_level=1)
             self.props["Position"] = 0L
             self.props["PlaybackStatus"] = 'Playing'
             self._player.playWave(video)
