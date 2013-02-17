@@ -462,6 +462,40 @@ class UserInterface(threading.Thread):
             elif cmd[0] == 'exit':
                 self.MpYt.loop.quit()
 
+class Playlist:
+
+    PlaylistCnt = 0
+
+    class Item:
+
+        ItemCnt = 0
+
+        def __init__(self, data):
+            Playlist.Item.ItemCnt += 1
+            self.idCnt = Playlist.Item.ItemCnt
+
+            self.id = data["id"]
+            self.title = data["snippet"]["title"]
+            self.position = data["snippet"]["position"]
+            self.description = data["snippet"]["description"]
+            self.videoId = data["snippet"]["resourceId"]["videoId"]
+            self.thumbnail = data["snippet"]["thumbnails"]["default"]
+
+    def __init__(self, title=None, listId=None, data=None, fetchItem=False):
+        Playlist.PlaylistCnt += 1
+        self.idCnt = Playlist.PlaylistCnt
+        self.logger = Logger('Playlist%d' % self.idCnt)
+
+        if data is None:
+            data = APIService.getList(title=title, listId=listId)
+        self.id = data["id"]
+        self.title = data["snippet"]["title"]
+        self.count = data["contentDetial"]["itemCount"]
+
+        self.fetchItem = fetchItem
+        if fetchItem:
+            self.audios = [Playlist.Item(item) for item in APIService.getItems(self.id)]
+
 class Player:
 
     audio = pyaudio.PyAudio()
