@@ -439,14 +439,13 @@ class UserInterface(threading.Thread):
         while True:
             cmd = raw_input('>> ').split()
             if cmd[0] == 'playlist.list':
-                print ', '.join([item["snippet"]["title"] for item in APIService.getLists()])
+                print ', '.join([item.title for item in Playlist.getLists(fetchItem=False)])
             elif cmd[0] == 'playlist.play':
                 objList = APIService.getList(title=cmd[1])
                 self.MpYt.player.setPlaylist(APIService.getItems(objList["id"], authenticate=False), objList)
                 self.MpYt.player.play()
             elif cmd[0] == 'playlistItem.list':
-                listId = APIService.getList(title=cmd[1])["id"]
-                print ', '.join([item["snippet"]["title"] for item in APIService.getItems(listId, authenticate=False)])
+                print ', '.join([item.title for item in Playlist.getList(title=cmd[1], fetchItem=True).audios])
             elif cmd[0] == 'current.next':
                 self.MpYt.player.next()
             elif cmd[0] == 'current.prev':
@@ -477,7 +476,7 @@ class Playlist:
             self.id = data["id"]
             self.title = data["snippet"]["title"]
             self.position = data["snippet"]["position"]
-            self.description = data["snippet"]["description"]
+            #self.description = data["snippet"]["description"]
             self.videoId = data["snippet"]["resourceId"]["videoId"]
             self.thumbnail = data["snippet"]["thumbnails"]["default"]
 
@@ -490,7 +489,7 @@ class Playlist:
             data = APIService.getList(title=title, listId=listId)
         self.id = data["id"]
         self.title = data["snippet"]["title"]
-        self.count = data["contentDetial"]["itemCount"]
+        self.count = data["contentDetails"]["itemCount"]
 
         self.fetchItem = fetchItem
         if fetchItem:
@@ -502,7 +501,7 @@ class Playlist:
 
     @classmethod
     def getList(cls, title=None, listId=None, fetchItem=True):
-        return Playlist(APIService.getList(title=title, listId=listId), fetchItem=fetchItem)
+        return Playlist(data=APIService.getList(title=title, listId=listId), fetchItem=fetchItem)
 
 class Player:
 
