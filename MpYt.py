@@ -26,6 +26,7 @@ import httplib2
 
 import wave
 import pyaudio
+import audioop
 
 from apiclient.discovery import build
 from oauth2client.client import OAuth2WebServerFlow
@@ -467,8 +468,16 @@ class DBusInterface(dbus.service.Object):
 
     @dbus.service.method(IFACE_PROPERTY, in_signature='ssv')
     def Set(self, interface, prop, value):
-        # FIXME: shoudn't pass
-        pass
+        # FIXME: should not pass
+        if interface == DBusInterface.IFACE_PLAYER:
+            if prop == 'Volume':
+                value = min(1, max(0, value))
+                self.MpYt.player.props['Volume'] = value
+                self.PropertiesChanged(DBusInterface.IFACE_PLAYER, {'Volume': value}, dbus.Array(signature='s'))
+            else:
+                pass
+        else:
+            pass
 
     @dbus.service.signal(IFACE_PROPERTY, signature='sa{sv}as')
     def PropertiesChanged(self, interface_name, changed_properties, invalidated_properties):
@@ -576,13 +585,14 @@ class Player:
 
     class _player(threading.Thread):
 
-        def __init__ (self, lock, update, finish):
+        def __init__ (self, lock, update, finish, process):
             threading.Thread.__init__(self)
             self.daemon = True
 
             self.wav = None
             self.update = update
             self.finish = finish
+            self.process = process
             self.stream = None
             self.cond = threading.Condition(lock)
 
@@ -632,9 +642,10 @@ class Player:
                     self.stream = None
                     self.finish()
                 else:
-                    self.stream.write(data)
+                    self.stream.write(self.process(data))
                     self.update()
                 self.cond.release()
+                time.sleep(0.001)
 
     def __init__(self, MpYt):
         self.MpYt = MpYt
@@ -667,7 +678,7 @@ class Player:
                 Tracks=dbus.Array([], signature='o'),
                 CanEditTracks=False)
 
-        self._player = Player._player(self.lock, self.updateCallback, self.finishCallback)
+        self._player = Player._player(self.lock, self.updateCallback, self.finishCallback, self.processCallback)
 
     def updateProps(self):
         self.logger.debug('updateProps')
@@ -810,6 +821,10 @@ class Player:
 
     def updateCallback(self):
         self.props["Position"] = long(self._player.getPos())
+
+    def processCallback(self, data):
+        # XXX: Not so appropriate?
+        return audioop.mul(data, self._player.wav.getsampwidth(), self.props["Volume"])
 
     def _spawn(self):
         self.logger.debug('_spawn')
