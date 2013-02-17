@@ -472,7 +472,7 @@ class DBusInterface(dbus.service.Object):
             if prop == 'Volume':
                 value = min(1, max(0, value))
                 self.MpYt.player.props['Volume'] = value
-                self.PropertiesChanged(DBusInterface.IFACE_PLAYER, {'Volume': value}, dbus.Array(signature='s'))
+                self.PropertiesChanged(DBusInterface.IFACE_PLAYER, {'Volume': dbus.Double(value)}, dbus.Array(signature='s'))
             # We may ignore the setting of 'Rate' since its max & min are both 1.0
 
     @dbus.service.signal(IFACE_PROPERTY, signature='sa{sv}as')
@@ -750,7 +750,7 @@ class Player:
                 self.logger.error('Invalid idx')
                 return
 
-            if self.props["PlayerbackStatus"] == 'Playing':
+            if self.props["PlaybackStatus"] == 'Playing':
                 self._stop()
             self.idx = idx
             self._spawn()
