@@ -18,14 +18,11 @@
 import Queue
 
 import os
-import sys
 import time
 import datetime
-import thread
 import threading
 import subprocess
 import httplib2
-from optparse import OptionParser
 
 import wave
 import pyaudio
@@ -39,14 +36,6 @@ import gobject
 import dbus
 import dbus.service
 import dbus.mainloop.glib
-
-class Struct:
-
-    def __init__(self, **kargs):
-        self.__dict__.update(**kargs)
-
-    def __repr__(self):
-        return '{' + ', '.join([repr(key) + ': ' + repr(val) for key, val in self.__dict__.items()]) + '}'
 
 class Config:
 
@@ -491,8 +480,6 @@ class Playlist:
     }
 
     class Item:
-
-        ItemCnt = 0
 
         def __init__(self, data):
             self.id = data["id"]
