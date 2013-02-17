@@ -307,7 +307,8 @@ class DBusInterface(dbus.service.Object):
     PATH = "/org/mpris/MediaPlayer2"
     IFACE_MAIN = "org.mpris.MediaPlayer2"
     IFACE_PLAYER = "org.mpris.MediaPlayer2.Player"
-    IFACE_PLAYLIST = "org.mpris.MediaPlayer2.Playlists"
+    IFACE_PLAYLISTS = "org.mpris.MediaPlayer2.Playlists"
+    IFACE_TRACKLIST = "org.mpris.MediaPlayer2.Tracklist"
     IFACE_PROPERTY = "org.freedesktop.DBus.Properties"
 
     def __init__ (self, MpYt):
@@ -389,18 +390,53 @@ class DBusInterface(dbus.service.Object):
         self.logger.debug('Seeked: %d (%d)' % (position, self.MpYt.player.props["Position"]))
 
     # org.mpris.MediaPlayer2.Playlists
-    @dbus.service.method(IFACE_PLAYLIST, in_signature='o')
+    @dbus.service.method(IFACE_PLAYLISTS, in_signature='o')
     def ActivatePlaylist(self, playlistId):
         self.MpYt.player.setPlaylist(Playlist.getList(listId=Playlist.pathToId(playlistId)))
 
-    @dbus.service.method(IFACE_PLAYLIST, in_signature='uusb', out_signature='a(oss)')
+    @dbus.service.method(IFACE_PLAYLISTS, in_signature='uusb', out_signature='a(oss)')
     def GetPlaylists(self, index, maxCount, order, reverse):
         # FIXME: shouldn't ignore order
         return dbus.Array([item.mprisFormat() for item in Playlist.getLists()[index:index+maxCount]])
 
-    @dbus.service.signal(IFACE_PLAYLIST, signature='(oss)')
+    @dbus.service.signal(IFACE_PLAYLISTS, signature='(oss)')
     def PlaylistChanged(self, playlist):
         self.logger.info('Playlist changed: %s' % repr(playlist))
+
+    # org.mpris.MediaPlayer2.Tracklist
+    @dbus.service.method(IFACE_TRACKLIST, in_signature='ao', out_signature='aa{sv}')
+    def GetTracksMetadata(self, tracks):
+        raise NotImplementedError('GetTracksMetadata')
+
+    @dbus.service.method(IFACE_TRACKLIST, in_signature='sob')
+    def AddTrack(self, url, afterTrack, setAsCurrent):
+        if self.MpYt.player.trackProps['CanEditTracks']:
+            raise NotImplementedError('AddTrack')
+
+    @dbus.service.method(IFACE_TRACKLIST, in_signature='o')
+    def RemoveTrack(self, trackId):
+        if self.MpYt.player.trackProps['CanEditTracks']:
+            raise NotImplementedError('RemoveTrack')
+
+    @dbus.service.method(IFACE_TRACKLIST, in_signature='o')
+    def GoTo(self, trackId):
+        self.MpYt.player.jump(int(trackId.rsplit('/', 1)[1]))
+
+    @dbus.service.signal(IFACE_TRACKLIST, signature='aoo')
+    def TrackListReplaced(self, tracks, currentTrack):
+        self.logger.debug('TraceListReplaced: %s %s' % (repr(tracks), repr(currentTrack)))
+
+    @dbus.service.signal(IFACE_TRACKLIST, signature='a{sv}o')
+    def TrackAdded(self, metadata, afterTrack):
+        self.logger.debug('TrackAdd: %s %s' % (repr(metadata), repr(afterTrack)))
+
+    @dbus.service.signal(IFACE_TRACKLIST, signature='o')
+    def TrackRemoved(self, trackId):
+        self.logger.debug('TrackRemoved: %s' % repr(trackId))
+
+    @dbus.service.signal(IFACE_TRACKLIST, signature='oa{sv}')
+    def TrackMetadataChanged(self, trackId, metadata):
+        self.logger.debug('TrackMetadataChanged: %s %s' % (repr(trackId), repr(metadata)))
 
     # org.freedesktop.DBus.Properties
     @dbus.service.method(IFACE_PROPERTY, in_signature='s', out_signature='a{sv}')
@@ -409,8 +445,10 @@ class DBusInterface(dbus.service.Object):
             return self.MpYt.props
         elif interface == DBusInterface.IFACE_PLAYER:
             return self.MpYt.player.props
-        elif interface == DBusInterface.IFACE_PLAYLIST:
+        elif interface == DBusInterface.IFACE_PLAYLISTS:
             return Playlist.props
+        elif interface == DBusInterface.IFACE_TRACKLIST:
+            return self.MpYt.player.trackProps
         else:
             raise ValueError('No such interface')
 
@@ -420,8 +458,10 @@ class DBusInterface(dbus.service.Object):
             return self.MpYt.props[prop]
         elif interface == DBusInterface.IFACE_PLAYER:
             return self.MpYt.player.props[prop]
-        elif interface == DBusInterface.IFACE_PLAYLIST:
+        elif interface == DBusInterface.IFACE_PLAYLISTS:
             return Playlist.props[prop]
+        elif interface == DBusInterface.IFACE_TRACKLIST:
+            return self.MpYt.player.trackProps[prop]
         else:
             raise ValueError('No such interface')
 
@@ -624,6 +664,10 @@ class Player:
                 CanControl=True)
         self._copyProps = self.props.copy()
 
+        self.trackProps = dict(
+                Tracks=dbus.Array([], signature='o'),
+                CanEditTracks=False)
+
         self._player = Player._player(self.lock, self.updateCallback, self.finishCallback)
 
     def updateProps(self):
@@ -680,6 +724,19 @@ class Player:
                 self.props["PlaybackStatus"] = 'Paused'
                 self._player.pause()
                 self.updateProps()
+
+    def jump(self, idx):
+        with self.lock:
+            self.logger.debug('jump')
+            if idx < 0 or idx >= len(self.playlist):
+                self.logger.error('Invalid idx')
+                return
+
+            if self.props["PlayerbackStatus"] == 'Playing':
+                self._stop()
+            self.idx = idx
+            self._spawn()
+            self.updateProps()
     
     def stop(self):
         with self.lock:
@@ -753,7 +810,7 @@ class Player:
             videoInfo = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]
 
             self.props["Metadata"] = {
-                    "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + videoId, variant_level=1),
+                    "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(self.idx), variant_level=1),
                     "mpris:artUrl": dbus.UTF8String(videoInfo["snippet"]["thumbnails"]["default"]["url"].encode('utf-8'), variant_level=1),
                     "mpris:length": dbus.Int64(video.getnframes() / video.getframerate() * 1000, variant_level=1),
                     "xesam:title": dbus.UTF8String(videoInfo["snippet"]["title"].encode('utf-8'), variant_level=1),
