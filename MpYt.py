@@ -194,8 +194,8 @@ class APIService:
             resp = cls.instance(authenticate=True).playlists().list(
                     part="id,snippet,contentDetails",
                     id=listId,
-                    mine=True)
-            if len(resp["items"] > 0):
+                    ).execute()
+            if len(resp["items"]) > 0:
                 return resp["items"][0]
 
         elif title is not None:
@@ -406,7 +406,7 @@ class DBusInterface(dbus.service.Object):
     @dbus.service.method(IFACE_PLAYLIST, in_signature='uusb', out_signature='a(oss)')
     def GetPlaylists(self, index, maxCount, order, reverse):
         # FIXME: shouldn't ignore order
-        return [item.mprisFormat() for item in Playlist.getList()[index:index+maxCount]]
+        return dbus.Array([item.mprisFormat() for item in Playlist.getLists()[index:index+maxCount]])
 
     @dbus.service.signal(IFACE_PLAYLIST, signature='(oss)')
     def PlaylistChanged(self, playlist):
@@ -533,7 +533,7 @@ class Playlist:
 
     @classmethod
     def _decode(cls, string):
-        return ''.join(map(chr, string.split('_')))
+        return ''.join(map(chr, map(int, string.split('_'))))
 
     @classmethod
     def getLists(cls, fetchItem=False):
