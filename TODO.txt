@@ -1,0 +1,4 @@
+1. Finish the `org.mpris.MediaPlayer2.TrackList' interface
+   (This is quiet difficult since we don't know some metadata while downloading)
+2. Capability of playing stream. (so that we can play audio from net)
+3. Let users edit their playlists.
