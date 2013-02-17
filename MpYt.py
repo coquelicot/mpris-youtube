@@ -468,16 +468,12 @@ class DBusInterface(dbus.service.Object):
 
     @dbus.service.method(IFACE_PROPERTY, in_signature='ssv')
     def Set(self, interface, prop, value):
-        # FIXME: should not pass
         if interface == DBusInterface.IFACE_PLAYER:
             if prop == 'Volume':
                 value = min(1, max(0, value))
                 self.MpYt.player.props['Volume'] = value
                 self.PropertiesChanged(DBusInterface.IFACE_PLAYER, {'Volume': value}, dbus.Array(signature='s'))
-            else:
-                pass
-        else:
-            pass
+            # We may ignore the setting of 'Rate' since its max & min are both 1.0
 
     @dbus.service.signal(IFACE_PROPERTY, signature='sa{sv}as')
     def PropertiesChanged(self, interface_name, changed_properties, invalidated_properties):
