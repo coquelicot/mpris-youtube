@@ -159,57 +159,68 @@ class APIService:
         return cls.__auth_instance
 
     @classmethod
-    def getLists(cls):
+    def _queryAll(cls, callback):
 
         token = ""
         result = []
-        youtube = cls.instance(authenticate=True)
 
         while True:
-            listResp = youtube.playlists().list(
+            resp = callback(token)
+            result.extend(resp["items"])
+
+            try:
+                token = resp["nextPageToken"]
+            except:
+                return result
+
+    @classmethod
+    def getLists(cls):
+
+        youtube = cls.instance(authenticate=True)
+        def callback(token):
+            return youtube.playlists().list(
                     part="id,snippet,contentDetails",
                     pageToken=token,
                     maxResults=50,
                     mine=True
                     ).execute()
-            for item in listResp["items"]:
-                element = dict(
-                        id=item["id"],
-                        title=item["snippet"]["title"],
-                        description=item["snippet"]["description"],
-                        itemCount=item["contentDetails"]["itemCount"])
-                result.append(element)
 
-            try:
-                token = listResp["nextPageToken"]
-            except:
-                return result
+        return cls._queryAll(callback)
+
+    @classmethod
+    def getList(cls, title=None, listId=None):
+
+        if listId is not None:
+            resp = cls.instance(authenticate=True).playlists().list(
+                    part="id,snippet,contentDetails",
+                    id=listId,
+                    mine=True)
+            if len(resp["items"] > 0):
+                return resp["items"][0]
+
+        elif title is not None:
+            for item in cls.getLists():
+                if item["snippet"]["title"] == title:
+                    return item
+
+        else:
+            raise ValueError("Please give me title or listId QQ")
+
+        return None
 
     @classmethod
     def getItems(cls, playlistId, authenticate=True):
 
-        token = ""
-        result = []
         youtube = cls.instance(authenticate=authenticate)
-
-        while True:
-            itemResp = youtube.playlistItems().list(
+        def callback(token):
+            return youtube.playlistItems().list(
                     part="id,snippet",
                     pageToken=token,
                     maxResults=50,
                     playlistId=playlistId
                     ).execute()
-            for item in itemResp["items"]:
-                element = dict(
-                        id=item["id"],
-                        title=item["snippet"]["title"],
-                        videoId=item["snippet"]["resourceId"]["videoId"])
-                result.append(element)
 
-            try:
-                token = itemResp["nextPageToken"]
-            except:
-                return result
+        return cls._queryAll(callback)
 
 class FileManager:
 
@@ -422,35 +433,20 @@ class UserInterface(threading.Thread):
         self.daemon = True
 
         self.MpYt = MpYt
-        self.playlistCache = dict()
-
-    def getPlaylists(self):
-        result = APIService.getLists()
-        for item in result:
-            self.playlistCache[item["title"]] = item
-        return result
-
-    def getPlaylist(self, title=None):
-        if title not in self.playlistCache:
-            self.getPlaylists()
-        if title in self.playlistCache:
-            return self.playlistCache[title]
-        else:
-            return None
 
     def run(self):
 
         while True:
             cmd = raw_input('>> ').split()
             if cmd[0] == 'playlist.list':
-                print ', '.join([item["title"] for item in self.getPlaylists()])
+                print ', '.join([item["snippet"]["title"] for item in APIService.getLists()])
             elif cmd[0] == 'playlist.play':
-                objList = self.getPlaylist(cmd[1])
+                objList = APIService.getList(title=cmd[1])
                 self.MpYt.player.setPlaylist(APIService.getItems(objList["id"], authenticate=False), objList)
                 self.MpYt.player.play()
             elif cmd[0] == 'playlistItem.list':
-                listId = self.getPlaylist(cmd[1])["id"]
-                print ', '.join([item["title"] for item in APIService.getItems(listId, authenticate=False)])
+                listId = APIService.getList(title=cmd[1])["id"]
+                print ', '.join([item["snippet"]["title"] for item in APIService.getItems(listId, authenticate=False)])
             elif cmd[0] == 'current.next':
                 self.MpYt.player.next()
             elif cmd[0] == 'current.prev':
@@ -588,7 +584,7 @@ class Player:
             self.playlist = playlist
             self.playlistInfo = playlistInfo
             for item in playlist:
-                self.MpYt.fileManager.fetchVideo(item["videoId"])
+                self.MpYt.fileManager.fetchVideo(item["snippet"]["resourceId"]["videoId"])
             self.updateProps()
 
     def play(self):
@@ -679,7 +675,7 @@ class Player:
         self.logger.debug('_spawn')
 
         try:
-            videoId = self.playlist[self.idx]["videoId"]
+            videoId = self.playlist[self.idx]["snippet"]["resourceId"]["videoId"]
             video = self.MpYt.fileManager.getVideo(videoId)
             youtube = APIService.instance(authenticate=False)
             videoInfo = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]
@@ -692,7 +688,7 @@ class Player:
                     }
             if self.playlistInfo is not None:
                 # using playlist's title instread
-                self.props["Metadata"]["xesam:album"] = dbus.UTF8String(self.playlistInfo["title"].encode('utf-8'), variant_level=1)
+                self.props["Metadata"]["xesam:album"] = dbus.UTF8String(self.playlistInfo["snippet"]["title"].encode('utf-8'), variant_level=1)
             self.props["Position"] = 0L
             self.props["PlaybackStatus"] = 'Playing'
             self._player.playWave(video)
