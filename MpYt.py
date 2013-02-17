@@ -496,6 +496,14 @@ class Playlist:
         if fetchItem:
             self.audios = [Playlist.Item(item) for item in APIService.getItems(self.id)]
 
+    @classmethod
+    def getLists(cls, fetchItem=False):
+        return [Playlist(data=item, fetchItem=fetchItem) for item in APIService.getLists()]
+
+    @classmethod
+    def getList(cls, title=None, listId=None, fetchItem=True):
+        return Playlist(APIService.getList(title=title, listId=listId), fetchItem=fetchItem)
+
 class Player:
 
     audio = pyaudio.PyAudio()
