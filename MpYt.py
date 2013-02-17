@@ -614,16 +614,16 @@ class Player:
             self.cond.notify()
 
         def seek(self, offset):
-            newPos = self.wav.tell() + int(offset * self.wav.getframerate() / 1000)
+            newPos = self.wav.tell() + int(offset * self.wav.getframerate() / 1000000)
             self.wav.setpos(min(max(0, newPos), self.wav.getnframes()))
 
         def setPos(self, pos):
-            newPos = int(pos * self.wav.getframerate() / 1000)
+            newPos = int(pos * self.wav.getframerate() / 1000000)
             if newPos >= 0 and newPos <= self.wav.getnframes():
                 self.wav.setpos(newPos)
 
         def getPos(self):
-            return int(self.wav.tell() * 1000 / self.wav.getframerate())
+            return int(self.wav.tell() * 1000000 / self.wav.getframerate())
 
         def run(self):
             while True:
@@ -834,7 +834,7 @@ class Player:
             self.props["Metadata"] = {
                     "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(self.idx), variant_level=1),
                     "mpris:artUrl": dbus.UTF8String(videoInfo["snippet"]["thumbnails"]["default"]["url"].encode('utf-8'), variant_level=1),
-                    "mpris:length": dbus.Int64(video.getnframes() / video.getframerate() * 1000, variant_level=1),
+                    "mpris:length": dbus.Int64(video.getnframes() / video.getframerate() * 1000000, variant_level=1),
                     "xesam:title": dbus.UTF8String(videoInfo["snippet"]["title"].encode('utf-8'), variant_level=1),
                     # using playlist's title instread
                     "xesam:album": dbus.UTF8String(self.playlistInfo.title.encode('utf-8'), variant_level=1)
