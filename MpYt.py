@@ -272,12 +272,13 @@ class FileManager:
             FileManager._fetcher().start()
 
     def fetchVideo(self, videoId):
-        if videoId not in self.fetchSet:
-            FileManager._fetcher.cond.acquire()
-            FileManager.fetchSet.add(videoId)
-            FileManager._fetcher.requests.put(videoId)
-            FileManager._fetcher.cond.notify()
-            FileManager._fetcher.cond.release()
+        with FileManager.lock:
+            if videoId not in self.fetchSet:
+                FileManager._fetcher.cond.acquire()
+                FileManager.fetchSet.add(videoId)
+                FileManager._fetcher.requests.put(videoId)
+                FileManager._fetcher.cond.notify()
+                FileManager._fetcher.cond.release()
 
     def getVideo(self, videoId):
         while True:
@@ -731,6 +732,8 @@ class Player:
 
     def finishCallback(self):
         self.idx += 1
+        # XXX: ugly fix
+        self.updateProps()
         if self.props["CanGoNext"]:
             self._spawn()
         else:
