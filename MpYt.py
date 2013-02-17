@@ -317,7 +317,7 @@ class DBusInterface(dbus.service.Object):
     PATH = "/org/mpris/MediaPlayer2"
     IFACE_MAIN = "org.mpris.MediaPlayer2"
     IFACE_PLAYER = "org.mpris.MediaPlayer2.Player"
-    #IFACE_PLAYLIST = "org.mpris.MediaPlayer2.Playlists"
+    IFACE_PLAYLIST = "org.mpris.MediaPlayer2.Playlists"
     IFACE_PROPERTY = "org.freedesktop.DBus.Properties"
 
     def __init__ (self, MpYt):
@@ -398,6 +398,20 @@ class DBusInterface(dbus.service.Object):
     def Seeked(self, position):
         self.logger.debug('Seeked: %d (%d)' % (position, self.MpYt.player.props["Position"]))
 
+    # org.mpris.MediaPlayer2.Playlists
+    @dbus.service.method(IFACE_PLAYLIST, in_signature='o')
+    def ActivatePlaylist(self, playlistId):
+        self.MpYt.player.setPlaylist(Playlist.getList(listId=Playlist.pathToId(playlistId)))
+
+    @dbus.service.method(IFACE_PLAYLIST, in_signature='uusb', out_signature='a(oss)')
+    def GetPlaylists(self, index, maxCount, order, reverse):
+        # FIXME: shouldn't ignore order
+        return [item.mprisFormat() for item in Playlist.getList()[index:index+maxCount]]
+
+    @dbus.service.signal(IFACE_PLAYLIST, signature='(oss)')
+    def PlaylistChanged(self, playlist):
+        self.logger.info('Playlist changed: %s' % repr(playlist))
+
     # org.freedesktop.DBus.Properties
     @dbus.service.method(IFACE_PROPERTY, in_signature='s', out_signature='a{sv}')
     def GetAll(self, interface):
@@ -405,8 +419,10 @@ class DBusInterface(dbus.service.Object):
             return self.MpYt.props
         elif interface == DBusInterface.IFACE_PLAYER:
             return self.MpYt.player.props
+        elif interface == DBusInterface.IFACE_PLAYLIST:
+            return Playlist.props
         else:
-            raise RuntimeError("Key Error")
+            raise ValueError('No such interface')
 
     @dbus.service.method(IFACE_PROPERTY, in_signature='ss', out_signature='v')
     def Get(self, interface, prop):
@@ -414,8 +430,10 @@ class DBusInterface(dbus.service.Object):
             return self.MpYt.props[prop]
         elif interface == DBusInterface.IFACE_PLAYER:
             return self.MpYt.player.props[prop]
+        elif interface == DBusInterface.IFACE_PLAYLIST:
+            return Playlist.props[prop]
         else:
-            raise RuntimeError("Key Error")
+            raise ValueError('No such interface')
 
     @dbus.service.method(IFACE_PROPERTY, in_signature='ssv')
     def Set(self, interface, prop, value):
@@ -463,15 +481,20 @@ class UserInterface(threading.Thread):
 class Playlist:
 
     PlaylistCnt = 0
+    props = {
+        'PlaylistCount': dbus.UInt32(len(APIService.getLists())),
+        'Orderings': 'Alphabetical', # XXX: Just for now
+        # FIXME: don't know what to place here
+        'ActivePlaylist': dbus.Struct(
+            (dbus.Boolean(False), dbus.Struct((dbus.ObjectPath('/'), '', ''))),
+            signature="(b(oss))"),
+    }
 
     class Item:
 
         ItemCnt = 0
 
         def __init__(self, data):
-            Playlist.Item.ItemCnt += 1
-            self.idCnt = Playlist.Item.ItemCnt
-
             self.id = data["id"]
             self.title = data["snippet"]["title"]
             self.position = data["snippet"]["position"]
@@ -493,6 +516,24 @@ class Playlist:
         self.fetchItem = fetchItem
         if fetchItem:
             self.audios = [Playlist.Item(item) for item in APIService.getItems(self.id)]
+
+    def mprisFormat(self):
+        return dbus.Struct((self.dbusPath(), self.title, ''), signature="(oss)")
+
+    def dbusPath(self):
+        return dbus.ObjectPath(DBusInterface.PATH + '/playlist/' + Playlist._encode(self.id))
+
+    @classmethod
+    def pathToId(cls, path):
+        return Playlist._decode(path.rsplit('/', 1)[1])
+
+    @classmethod
+    def _encode(cls, string):
+        return '_'.join(map(str, map(ord, string)))
+
+    @classmethod
+    def _decode(cls, string):
+        return ''.join(map(chr, string.split('_')))
 
     @classmethod
     def getLists(cls, fetchItem=False):
@@ -626,6 +667,7 @@ class Player:
             for item in self.playlist:
                 self.MpYt.fileManager.fetchVideo(item.videoId)
             self.updateProps()
+            self.MpYt.dbusInterface.PlaylistChanged(playlist.mprisFormat())
 
     def play(self):
         with self.lock:
