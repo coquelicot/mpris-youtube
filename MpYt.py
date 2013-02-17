@@ -490,7 +490,6 @@ class UserInterface(threading.Thread):
                 print ', '.join([item.title for item in Playlist.getLists(fetchItem=False)])
             elif cmd[0] == 'playlist.play':
                 self.MpYt.player.setPlaylist(Playlist.getList(title=cmd[1], fetchItem=True))
-                self.MpYt.player.play()
             elif cmd[0] == 'playlistItem.list':
                 print ', '.join([item.title for item in Playlist.getList(title=cmd[1], fetchItem=True).audios])
             elif cmd[0] == 'current.next':
@@ -684,22 +683,34 @@ class Player:
             if value != self._copyProps[key]:
                 changeDict[key] = value
                 self._copyProps[key] = value
-        self.MpYt.dbusInterface.PropertiesChanged(DBusInterface.IFACE_PLAYER, changeDict, dbus.Array(signature='s'))
+        if changeDict:
+            self.MpYt.dbusInterface.PropertiesChanged(DBusInterface.IFACE_PLAYER, changeDict, dbus.Array(signature='s'))
+        else:
+            self.logger.debug('Nothing to update.')
     
-    def setPlaylist(self, playlist):
+    def setPlaylist(self, playlist, autoPlay=True):
         with self.lock:
             self.logger.debug('setPlaylist')
+
             if self.props["PlaybackStatus"] != 'Stopped':
                 self._stop()
                 self.props["PlaybackStatus"] = 'Stopped'
-                self.updateProps()
+                # is this necessary?
+                #self.updateProps()
+
             self.idx = 0
             self.playlist = playlist.audios
             self.playlistInfo = playlist
             for item in self.playlist:
                 self.MpYt.fileManager.fetchVideo(item.videoId)
             self.updateProps()
-            self.MpYt.dbusInterface.PlaylistChanged(playlist.mprisFormat())
+
+            self.MpYt.dbusInterface.TrackListReplaced(
+                    dbus.Array([dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(i)) for i in range(len(self.playlist))]),
+                    dbus.ObjectPath(DBusInterface.PATH + '/video/0'))
+
+        if autoPlay:
+            self.play()
 
     def play(self):
         with self.lock:
