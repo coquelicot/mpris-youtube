@@ -496,7 +496,9 @@ class UserInterface(threading.Thread):
             elif cmd[0] == 'playlist.play':
                 self.MpYt.player.setPlaylist(Playlist.getList(title=cmd[1], fetchItem=True))
             elif cmd[0] == 'playlistItem.list':
-                print ', '.join([item.title for item in Playlist.getList(title=cmd[1], fetchItem=True).audios])
+                titleList = [item.title for item in Playlist.getList(title=cmd[1], fetchItem=True).audios]
+                for i in range(1, len(titleList) + 1):
+                    print i, titleList[i-1]
             elif cmd[0] == 'current.next':
                 self.MpYt.player.next()
             elif cmd[0] == 'current.prev':
@@ -509,6 +511,8 @@ class UserInterface(threading.Thread):
                 self.MpYt.player.stop()
             elif cmd[0] == 'current.seek':
                 self.MpYt.player.seek(int(cmd[1]))
+            elif cmd[0] == 'current.jump':
+                self.MpYt.player.jump(int(cmd[1])-1)
             elif cmd[0] == 'exit':
                 self.MpYt.loop.quit()
 
@@ -585,7 +589,7 @@ class Player:
             threading.Thread.__init__(self)
             self.daemon = True
 
-            self.wav = None
+            self.video = None
             self.update = update
             self.finish = finish
             self.process = process
@@ -594,15 +598,15 @@ class Player:
 
             self.start()
 
-        def playWave(self, wav):
+        def playWave(self, video):
             if self.stream is not None:
                 self.stream.close()
 
-            self.wav = wav
+            self.video = video
             self.stream = Player.audio.open(
-                    format=Player.audio.get_format_from_width(wav.getsampwidth()),
-                    channels=wav.getnchannels(),
-                    rate=wav.getframerate(),
+                    format=Player.audio.get_format_from_width(video.getsampwidth()),
+                    channels=video.getnchannels(),
+                    rate=video.getframerate(),
                     output=True)
             self.cond.notify()
 
@@ -614,16 +618,16 @@ class Player:
             self.cond.notify()
 
         def seek(self, offset):
-            newPos = self.wav.tell() + int(offset * self.wav.getframerate() / 1000000)
-            self.wav.setpos(min(max(0, newPos), self.wav.getnframes()))
+            newPos = self.video.tell() + int(offset * self.video.getframerate() / 1000000)
+            self.video.setpos(min(max(0, newPos), self.video.getnframes()))
 
         def setPos(self, pos):
-            newPos = int(pos * self.wav.getframerate() / 1000000)
-            if newPos >= 0 and newPos <= self.wav.getnframes():
-                self.wav.setpos(newPos)
+            newPos = int(pos * self.video.getframerate() / 1000000)
+            if newPos >= 0 and newPos <= self.video.getnframes():
+                self.video.setpos(newPos)
 
         def getPos(self):
-            return int(self.wav.tell() * 1000000 / self.wav.getframerate())
+            return int(self.video.tell() * 1000000 / self.video.getframerate())
 
         def run(self):
             while True:
@@ -632,7 +636,7 @@ class Player:
                 while self.stream is None or self.stream.is_stopped():
                     self.cond.wait()
 
-                data = self.wav.readframes(1024)
+                data = self.video.readframes(1024)
                 if data == '':
                     self.stream.close()
                     self.stream = None
@@ -820,7 +824,7 @@ class Player:
 
     def processCallback(self, data):
         # XXX: Not so appropriate?
-        return audioop.mul(data, self._player.wav.getsampwidth(), self.props["Volume"])
+        return audioop.mul(data, self._player.video.getsampwidth(), self.props["Volume"])
 
     def _spawn(self):
         self.logger.debug('_spawn')
