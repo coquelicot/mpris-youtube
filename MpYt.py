@@ -214,7 +214,7 @@ class APIService:
 
 class FileManager:
 
-    EXTENTIONS = ['wav']
+    EXTENTIONS = ['mp3', 'wav']
     DOWNLOAD_URI = 'http://www.youtube.com/watch?v=%s'
 
     fetchSet = set()
@@ -253,7 +253,7 @@ class FileManager:
                     '--prefer-free-formats',
                     FileManager.DOWNLOAD_URI % self.videoId,
                     '-o', os.path.join(config.storageDir, 'video', '%(id)s.%(ext)s'),
-                    '-x', '--audio-format', 'wav']
+                    '-x', '--audio-format', 'mp3']
                 code = subprocess.call(prog, stdout=FileManager.fnull, stderr=FileManager.fnull)
 
                 if code == 0:
@@ -265,6 +265,46 @@ class FileManager:
                         self.logger.warning("Youtube-dl doesn't return 0!!")
                     with FileManager.lock:
                         FileManager.fetchSet.remove(self.videoId)
+
+    class _video:
+
+        VideoCnt = 0
+
+        def __init__(self, path, fileType):
+            FileManager._video.VideoCnt += 1
+            self.idx = FileManager._video.VideoCnt
+            self.logger = Logger('_video%d' % self.idx)
+
+            if fileType == 'wav':
+                self.logger.info("Init with wav file")
+
+            elif fileType == 'mp3':
+                self.logger.info("Init with mp3 file (convert to wav)")
+
+                wavePath = os.path.join(config.runtimeDir, '.tmp.wav')
+                code = subprocess.call(['avconv', '-y', '-i', path, wavePath], stdout=FileManager.fnull, stderr=FileManager.fnull)
+                if code < 0:
+                    raise RuntimeError("Can't convert file `%s'" % path)
+                else:
+                    path = wavePath
+
+            else:
+                raise ValueError('What is this?')
+
+            self.video = wave.open(path, 'rb')
+            self.getsampwidth = self.video.getsampwidth
+            self.getnchannels = self.video.getnchannels
+            self.getnframes = self.video.getnframes
+            self.getframerate = self.video.getframerate
+            self.read = lambda: self.video.readframes(1024)
+            self.tell = self.video.tell
+            self.setPos = self.video.setpos
+
+        def __del__(self):
+            try:
+                self.video.close()
+            except:
+                pass
 
     def __init__(self):
         self.logger = Logger('FileManager')
@@ -290,7 +330,7 @@ class FileManager:
             for ext in FileManager.EXTENTIONS:
                 path = os.path.join(config.storageDir, 'video', videoId + '.' + ext)
                 if os.path.isfile(path):
-                    return wave.open(path, 'rb')
+                    return FileManager._video(path, ext)
             self.logger.info("Waiting for video to be fetch..")
             time.sleep(10)
 
@@ -619,12 +659,12 @@ class Player:
 
         def seek(self, offset):
             newPos = self.video.tell() + int(offset * self.video.getframerate() / 1000000)
-            self.video.setpos(min(max(0, newPos), self.video.getnframes()))
+            self.video.setPos(min(max(0, newPos), self.video.getnframes()))
 
         def setPos(self, pos):
             newPos = int(pos * self.video.getframerate() / 1000000)
             if newPos >= 0 and newPos <= self.video.getnframes():
-                self.video.setpos(newPos)
+                self.video.setPos(newPos)
 
         def getPos(self):
             return int(self.video.tell() * 1000000 / self.video.getframerate())
@@ -636,7 +676,7 @@ class Player:
                 while self.stream is None or self.stream.is_stopped():
                     self.cond.wait()
 
-                data = self.video.readframes(1024)
+                data = self.video.read()
                 if data == '':
                     self.stream.close()
                     self.stream = None
