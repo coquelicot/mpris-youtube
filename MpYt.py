@@ -561,10 +561,12 @@ class DBusInterface(dbus.service.Object):
     @dbus.service.method(IFACE_PROPERTY, in_signature='ssv')
     def Set(self, interface, prop, value):
         if interface == DBusInterface.IFACE_PLAYER:
-            if prop == 'Volume':
-                value = min(1, max(0, value))
-                self.MpYt.player.props['Volume'] = value
-                self.PropertiesChanged(DBusInterface.IFACE_PLAYER, {'Volume': dbus.Double(value)}, dbus.Array(signature='s'))
+            if self.MpYt.player.props['CanControl']:
+                if prop == 'Volume':
+                    self.MpYt.player.setVolume(value)
+                if prop == 'LoopStatus':
+                    self.MpYt.player.setLoop(value)
+
             # We may ignore the setting of 'Rate' since its max & min are both 1.0
 
     @dbus.service.signal(IFACE_PROPERTY, signature='sa{sv}as')
@@ -605,6 +607,8 @@ class UserInterface(threading.Thread):
                 self.MpYt.player.seek(int(cmd[1]))
             elif cmd[0] == 'current.jump':
                 self.MpYt.player.jump(int(cmd[1])-1)
+            elif cmd[0] == 'config.setLoop':
+                self.MpYt.player.setLoop(cmd[1])
             elif cmd[0] == 'exit':
                 self.MpYt.loop.quit()
 
@@ -755,7 +759,7 @@ class Player:
 
         self.props = dict(
                 PlaybackStatus='Stopped', # Playing, Paused, Stopped
-                #LoopStatusk='None', # None, Track, Playlist
+                LoopStatus='Playlist', # None, Track, Playlist
                 Rate=1.0, # only 1.0 for now
                 #Shuffle=False,
                 Metadata=dbus.Dictionary(signature='sv'),
@@ -780,9 +784,15 @@ class Player:
 
     def updateProps(self):
         self.logger.debug('updateProps')
-        self.props["CanGoNext"] = self.idx < len(self.playlist) - 1
-        self.props["CanGoPrevious"] = self.idx > 0
-        self.props["CanPlay"] = self.idx < len(self.playlist)
+
+        if self.props['LoopStatus'] == 'Playlist':
+            self.props["CanGoNext"] = len(self.playlist) > 0
+            self.props["CanGoPrevious"] = self.props["CanGoNext"]
+            self.props["CanPlay"] = self.props["CanGoNext"]
+        else:
+            self.props["CanGoNext"] = self.idx < len(self.playlist) - 1
+            self.props["CanGoPrevious"] = self.idx > 0
+            self.props["CanPlay"] = self.idx < len(self.playlist)
         self.props["CanPause"] = self.props["PlaybackStatus"] != 'Stopped' and self.props["CanPlay"]
         self.props["CanPlayPause"] = self.props["CanPlay"]
         self.props["CanSeek"] = self._player.canSeek()
@@ -821,6 +831,21 @@ class Player:
 
         if autoPlay:
             self.play()
+
+    def setVolume(self, value):
+        with self.lock:
+            value = min(1, max(0, value))
+            self.props['Volume'] = value
+            self.MpYt.dbusInterface.PropertiesChanged(DBusInterface.IFACE_PLAYER, {'Volume': dbus.Double(value)}, dbus.Array(signature='s'))
+
+    def setLoop(self, value):
+        with self.lock:
+            if value in ['None', 'Track', 'Playlist']:
+                self.props['LoopStatus'] = value
+                self.MpYt.dbusInterface.PropertiesChanged(DBusInterface.IFACE_PLAYER, {'LoopStatus': value}, dbus.Array(signature='s'))
+                self.updateProps()
+            else:
+                raise ValueError('Unknown loop state')
 
     def play(self):
         with self.lock:
@@ -893,30 +918,42 @@ class Player:
     def next(self):
         with self.lock:
             self.logger.debug('next')
-            if self.idx + 1 >= len(self.playlist):
+
+            if not self.props['CanGoNext']:
                 raise RuntimeError('No such song')
             if self.props['PlaybackStatus'] != 'Stopped':
                 self._stop()
+
             self.idx += 1
+            if self.idx >= len(self.playlist):
+                self.idx = 0
             self._spawn()
             self.updateProps()
 
     def prev(self):
         with self.lock:
             self.logger.debug('prev')
-            if self.idx - 1 < 0:
+
+            if not self.props['CanGoPrevious']:
                 raise RuntimeError('No such song')
             if self.props['PlaybackStatus'] != 'Stopped':
                 self._stop()
+
             self.idx -= 1
+            if self.idx < 0:
+                self.idx = len(self.playlist) - 1
             self._spawn()
             self.updateProps()
 
     def finishCallback(self):
-        self.idx += 1
-        # XXX: ugly fix
+
+        if self.props['LoopStatus'] != 'Track':
+            self.idx += 1
+            if self.props['LoopStatus'] == 'Playlist' and self.idx >= len(self.playlist):
+                self.idx = 0
         self.updateProps()
-        if self.props["CanGoNext"]:
+
+        if self.props["CanPlay"]:
             self._spawn()
         else:
             self.props["PlaybackStatus"] = 'Stopped'
