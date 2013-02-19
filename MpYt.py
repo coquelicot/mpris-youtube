@@ -24,6 +24,7 @@ import threading
 import subprocess
 import httplib2
 
+import mad
 import wave
 import pyaudio
 import audioop
@@ -48,7 +49,7 @@ class Config:
         config = dict()
         config["storageDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'data')
         config["runtimeDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'var')
-        config["fetchThreads"] = 3
+        config["fetchThreads"] = 2
 
         try:
             with open(Config.CONFIGFILE, 'r') as fin:
@@ -274,35 +275,73 @@ class FileManager:
             FileManager._video.VideoCnt += 1
             self.idx = FileManager._video.VideoCnt
             self.logger = Logger('_video%d' % self.idx)
+            self.fileType = fileType
 
-            if fileType == 'wav':
-                self.logger.info("Init with wav file")
+            if fileType == 'online': # path = download path
+                self.logger.info("Init from `%s'" % path)
+                self.canSeek = False
 
-            elif fileType == 'mp3':
-                self.logger.info("Init with mp3 file (convert to wav)")
+                dlPath = os.path.join(config.runtimeDir, 'dlFifo')
+                cvPath = os.path.join(config.runtimeDir, 'cvFifo.mp3') # convert to mp3
 
-                wavePath = os.path.join(config.runtimeDir, '.tmp.wav')
-                code = subprocess.call(['avconv', '-y', '-i', path, wavePath], stdout=FileManager.fnull, stderr=FileManager.fnull)
-                if code < 0:
-                    raise RuntimeError("Can't convert file `%s'" % path)
+                if os.path.exists(dlPath):
+                    os.remove(dlPath)
+                if os.path.exists(cvPath):
+                    os.remove(cvPath)
+                os.mkfifo(dlPath)
+                os.mkfifo(cvPath)
+
+                dlProg = ['youtube-dl', '--quiet', '--max-quality', '43', '--prefer-free-formats', path, '-o', dlPath]
+                cvProg = ['avconv', '-y', '-i', dlPath, cvPath]
+                self.dlChild = subprocess.Popen(dlProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
+                self.cvChild = subprocess.Popen(cvProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
+
+                self.video = mad.MadFile(cvPath)
+                self.getsampwidth = lambda: 2 # verify me
+                self.getnchannels = lambda: 1 if self.video.mode == mad.MODE_SINGLE_CHANNEL else 2 # verify me!
+                self.getnframes = lambda: 0
+                self.getframerate = self.video.samplerate
+                self.read = lambda: str(self.video.read())
+                self.tell = lambda: int(self.video.current_time() * self.video.samplerate())
+                self.setPos = lambda pos: self.video.seek_time(pos / self.video.samplerate() * 1000)
+
+            else: # path = local file path
+                self.canSeek = True
+
+                if fileType == 'wav':
+                    self.logger.info("Init with wav file")
+
+                elif fileType == 'mp3':
+                    self.logger.info("Init with mp3 file (convert to wav)")
+
+                    wavePath = os.path.join(config.runtimeDir, '.tmp.wav')
+                    code = subprocess.call(['avconv', '-y', '-i', path, wavePath], stdout=FileManager.fnull, stderr=FileManager.fnull)
+                    if code < 0:
+                        raise RuntimeError("Can't convert file `%s'" % path)
+                    else:
+                        path = wavePath
+
                 else:
-                    path = wavePath
+                    raise ValueError('What is this?')
 
-            else:
-                raise ValueError('What is this?')
-
-            self.video = wave.open(path, 'rb')
-            self.getsampwidth = self.video.getsampwidth
-            self.getnchannels = self.video.getnchannels
-            self.getnframes = self.video.getnframes
-            self.getframerate = self.video.getframerate
-            self.read = lambda: self.video.readframes(1024)
-            self.tell = self.video.tell
-            self.setPos = self.video.setpos
+                self.video = wave.open(path, 'rb')
+                self.getsampwidth = self.video.getsampwidth
+                self.getnchannels = self.video.getnchannels
+                self.getnframes = self.video.getnframes
+                self.getframerate = self.video.getframerate
+                self.read = lambda: self.video.readframes(1024)
+                self.tell = self.video.tell
+                self.setPos = self.video.setpos
 
         def __del__(self):
             try:
                 self.video.close()
+                if not self.dlChild.poll():
+                    self.dlChild.kill()
+                    self.dlChild.wait()
+                if not self.cvChild.poll():
+                    self.cvChild.kill()
+                    self.cvChild.wait()
             except:
                 pass
 
@@ -322,17 +361,15 @@ class FileManager:
                 FileManager._fetcher.cond.release()
 
     def getVideo(self, videoId):
-        while True:
-            with FileManager.lock:
-                if videoId not in FileManager.fetchSet:
-                    raise RuntimeError("Video not in cache set.")
+        with FileManager.lock:
+            if videoId not in FileManager.fetchSet:
+                raise RuntimeError("Video not in cache set.")
 
-            for ext in FileManager.EXTENTIONS:
-                path = os.path.join(config.storageDir, 'video', videoId + '.' + ext)
-                if os.path.isfile(path):
-                    return FileManager._video(path, ext)
-            self.logger.info("Waiting for video to be fetch..")
-            time.sleep(10)
+        for ext in FileManager.EXTENTIONS:
+            path = os.path.join(config.storageDir, 'video', videoId + '.' + ext)
+            if os.path.isfile(path):
+                return FileManager._video(path, ext)
+        return FileManager._video(FileManager.DOWNLOAD_URI % videoId, 'online')
 
     def loadSet(self):
         result = set()
@@ -638,7 +675,7 @@ class Player:
 
             self.start()
 
-        def playWave(self, video):
+        def playAudio(self, video):
             if self.stream is not None:
                 self.stream.close()
 
@@ -668,6 +705,9 @@ class Player:
 
         def getPos(self):
             return int(self.video.tell() * 1000000 / self.video.getframerate())
+
+        def canSeek(self):
+            return self.stream is not None and self.video.canSeek
 
         def run(self):
             while True:
@@ -727,7 +767,7 @@ class Player:
         self.props["CanPlay"] = self.idx < len(self.playlist)
         self.props["CanPause"] = self.props["PlaybackStatus"] != 'Stopped' and self.props["CanPlay"]
         self.props["CanPlayPause"] = self.props["CanPlay"]
-        self.props["CanSeek"] = True # for now
+        self.props["CanSeek"] = self._player.canSeek()
 
         changeDict = dict()
         for key, value in self.props.items():
@@ -885,7 +925,7 @@ class Player:
                     }
             self.props["Position"] = 0L
             self.props["PlaybackStatus"] = 'Playing'
-            self._player.playWave(video)
+            self._player.playAudio(video)
         except:
             self.logger.warning("Something bad happened! Skipping this video instead.")
             self.finishCallback()

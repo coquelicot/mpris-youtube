@@ -1,4 +1,3 @@
-1. Finish the `org.mpris.MediaPlayer2.TrackList' interface
-   (This is quiet difficult since we don't know some metadata while downloading)
-2. Capability of playing stream. (so that we can play audio from net)
-3. Let users edit their playlists.
+1. update metadata when file fetched?
+2. change to local file when file fetched?
+3. try to speed up youtube-dl (set lang takes seconds)
