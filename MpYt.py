@@ -295,8 +295,8 @@ class FileManager:
 
                 dlProg = ['youtube-dl', '--quiet', '--max-quality', '43', '--prefer-free-formats', path, '-o', dlPath]
                 cvProg = ['avconv', '-y', '-i', dlPath, cvPath]
-                self.dlChild = subprocess.Popen(' '.join(dlProg), stderr=FileManager.fnull, stdout=FileManager.fnull, shell=True)
-                self.cvChild = subprocess.Popen(' '.join(cvProg), stderr=FileManager.fnull, stdout=FileManager.fnull, shell=True)
+                self.dlChild = subprocess.Popen(dlProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
+                self.cvChild = subprocess.Popen(cvProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
 
                 self.video = mad.MadFile(cvPath)
                 self.getsampwidth = lambda: 2 # verify me
@@ -341,10 +341,12 @@ class FileManager:
                 try:
                     if self.fileType == FileManager.ONLINE_EXT:
                         self.logger.debug('remove online stream')
-                        if self.dlChild.poll():
+                        if not self.dlChild.poll():
                             self.dlChild.kill()
-                        if self.cvChild.poll():
+                            self.dlChild.wait()
+                        if not self.cvChild.poll():
                             self.cvChild.kill()
+                            self.cvChild.wait()
                     else:
                         self.video.close()
                 except:
