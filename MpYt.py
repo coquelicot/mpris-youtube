@@ -49,7 +49,7 @@ class Config:
         config = dict()
         config["storageDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'data')
         config["runtimeDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'var')
-        config["fetchThreads"] = 2
+        config["fetchThreads"] = 0
 
         try:
             with open(Config.CONFIGFILE, 'r') as fin:
@@ -255,7 +255,7 @@ class FileManager:
                     FileManager.DOWNLOAD_URI % self.videoId,
                     '-o', os.path.join(config.storageDir, 'video', '%(id)s.%(ext)s'),
                     '-x', '--audio-format', 'mp3']
-                code = subprocess.call(prog, stdout=FileManager.fnull, stderr=FileManager.fnull)
+                code = subprocess.call(prog, stdout=FileManager.fnull, stderr=FileManager.fnull, close_fds=True)
 
                 if code == 0:
                     self.logger.info("video %s fetched" % self.videoId)
@@ -293,17 +293,17 @@ class FileManager:
 
                 dlProg = ['youtube-dl', '--quiet', '--max-quality', '43', '--prefer-free-formats', path, '-o', dlPath]
                 cvProg = ['avconv', '-y', '-i', dlPath, cvPath]
-                self.dlChild = subprocess.Popen(dlProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
-                self.cvChild = subprocess.Popen(cvProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
+                self.dlChild = subprocess.Popen(' '.join(dlProg), stderr=FileManager.fnull, stdout=FileManager.fnull, shell=True)
+                self.cvChild = subprocess.Popen(' '.join(cvProg), stderr=FileManager.fnull, stdout=FileManager.fnull, shell=True)
 
                 self.video = mad.MadFile(cvPath)
                 self.getsampwidth = lambda: 2 # verify me
                 self.getnchannels = lambda: 1 if self.video.mode == mad.MODE_SINGLE_CHANNEL else 2 # verify me!
                 self.getnframes = lambda: 0
                 self.getframerate = self.video.samplerate
-                self.read = lambda: str(self.video.read())
+                self.read = self.video.read
                 self.tell = lambda: int(self.video.current_time() * self.video.samplerate())
-                self.setPos = lambda pos: self.video.seek_time(pos / self.video.samplerate() * 1000)
+                #self.setPos = lambda pos: self.video.seek_time(pos / self.video.samplerate() * 1000)
 
             else: # path = local file path
                 self.canSeek = True
@@ -338,10 +338,8 @@ class FileManager:
                 self.video.close()
                 if not self.dlChild.poll():
                     self.dlChild.kill()
-                    self.dlChild.wait()
                 if not self.cvChild.poll():
                     self.cvChild.kill()
-                    self.cvChild.wait()
             except:
                 pass
 
@@ -717,13 +715,13 @@ class Player:
                     self.cond.wait()
 
                 data = self.video.read()
-                if data == '':
+                if data:
+                    self.stream.write(self.process(data))
+                    self.update()
+                else:
                     self.stream.close()
                     self.stream = None
                     self.finish()
-                else:
-                    self.stream.write(self.process(data))
-                    self.update()
                 self.cond.release()
                 time.sleep(0.001)
 
