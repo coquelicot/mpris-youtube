@@ -277,6 +277,7 @@ class FileManager:
             self.idx = FileManager._video.VideoCnt
             self.logger = Logger('_video%d' % self.idx)
             self.fileType = fileType
+            self.closed = False
 
             if fileType == FileManager.ONLINE_EXT: # path = download path
                 self.logger.info("Init from `%s'" % path)
@@ -334,17 +335,20 @@ class FileManager:
                 self.tell = self.video.tell
                 self.setPos = self.video.setpos
 
-        def __del__(self):
-            try:
-                self.video.close()
-                if self.fileType == FileManager.ONLINE_EXT:
-                    self.logger.debug('remove online stream')
-                    if not self.dlChild.poll():
-                        self.dlChild.kill()
-                    if not self.cvChild.poll():
-                        self.cvChild.kill()
-            except:
-                pass
+        def close(self):
+            if not self.closed:
+                self.closed = True
+                try:
+                    if self.fileType == FileManager.ONLINE_EXT:
+                        self.logger.debug('remove online stream')
+                        if self.dlChild.poll():
+                            self.dlChild.kill()
+                        if self.cvChild.poll():
+                            self.cvChild.kill()
+                    else:
+                        self.video.close()
+                except:
+                    pass
 
     def __init__(self):
         self.logger = Logger('FileManager')
@@ -710,6 +714,11 @@ class Player:
         def canSeek(self):
             return self.stream is not None and self.video.canSeek
 
+        def stop(self):
+            self.stream.close()
+            self.video.close()
+            self.stream = None
+
         def run(self):
             while True:
 
@@ -722,8 +731,7 @@ class Player:
                     self.stream.write(self.process(data))
                     self.update()
                 else:
-                    self.stream.close()
-                    self.stream = None
+                    self.stop()
                     self.finish()
                 self.cond.release()
                 time.sleep(0.001)
@@ -835,7 +843,7 @@ class Player:
                 self.logger.error('Invalid idx')
                 return
 
-            if self.props["PlaybackStatus"] == 'Playing':
+            if self.props["PlaybackStatus"] != 'Stopped':
                 self._stop()
             self.idx = idx
             self._spawn()
@@ -877,6 +885,8 @@ class Player:
             self.logger.debug('next')
             if self.idx + 1 >= len(self.playlist):
                 raise RuntimeError('No such song')
+            if self.props['PlaybackStatus'] != 'Stopped':
+                self._stop()
             self.idx += 1
             self._spawn()
             self.updateProps()
@@ -886,6 +896,8 @@ class Player:
             self.logger.debug('prev')
             if self.idx - 1 < 0:
                 raise RuntimeError('No such song')
+            if self.props['PlaybackStatus'] != 'Stopped':
+                self._stop()
             self.idx -= 1
             self._spawn()
             self.updateProps()
@@ -925,7 +937,7 @@ class Player:
                     }
             # XXX: not so appropriate
             if video.canSeek:
-                self.props["mpris:length"] = dbus.Int64(video.getnframes() / video.getframerate() * 1000000, variant_level=1)
+                self.props["Metadata"]["mpris:length"] = dbus.Int64(video.getnframes() / video.getframerate() * 1000000, variant_level=1)
             self.props["Position"] = 0L
             self.props["PlaybackStatus"] = 'Playing'
             self._player.playAudio(video)
@@ -936,7 +948,7 @@ class Player:
     def _stop(self):
         self.logger.debug('_stop')
         self.props["Position"] = 0L
-        self._player.pause()
+        self._player.stop()
 
 class MprisYoutube:
 
