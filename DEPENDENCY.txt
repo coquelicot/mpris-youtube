@@ -3,6 +3,8 @@ lib:
     google's python api
     youtube-dl
     pymad
+    python-gobject
+    python-httplib2
 tool:
     avconv
     ffmpeg
