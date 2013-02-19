@@ -815,7 +815,6 @@ class Player:
             self.updateProps()
             Playlist.props['ActivePlaylist'] = dbus.Struct((dbus.Boolean(True), playlist.mprisFormat()))
 
-            self.MpYt.dbusInterface.PlaylistChanged(playlist.mprisFormat())
             self.MpYt.dbusInterface.TrackListReplaced(
                     dbus.Array([dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(i)) for i in range(len(self.playlist))]),
                     dbus.ObjectPath(DBusInterface.PATH + '/video/0'))
