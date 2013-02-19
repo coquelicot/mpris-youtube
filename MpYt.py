@@ -55,13 +55,18 @@ class Config:
             with open(Config.CONFIGFILE, 'r') as fin:
                 for line in fin.readlines():
                     key, value = line.split('=', 1)
-                    #FIXME: what if it's a integer?
-                    config[key.strip()] = value.strip()
+                    config[key.strip()] = self.autoConvertType(value.strip())
             print 'Config loaded.'
         except:
             print "Can't load config file `%s', using default config." % Config.CONFIGFILE
 
         self.__dict__ = config
+
+    def autoConvertType(self, value):
+        if value.isdigit():
+            return int(value)
+        else:
+            return value
 
     def saveConfig(self):
 
@@ -481,8 +486,11 @@ class DBusInterface(dbus.service.Object):
 
     @dbus.service.method(IFACE_PLAYLISTS, in_signature='uusb', out_signature='a(oss)')
     def GetPlaylists(self, index, maxCount, order, reverse):
-        # FIXME: shouldn't ignore order
-        return dbus.Array([item.mprisFormat() for item in Playlist.getLists()[index:index+maxCount]])
+        if order == 'Alphabetical':
+            lists = sorted(Playlist.getLists(), key=lambda obj: obj.title)
+        else:
+            raise ValueError('Does not support this order')
+        return dbus.Array([item.mprisFormat() for item in lists[index:index+maxCount]])
 
     @dbus.service.signal(IFACE_PLAYLISTS, signature='(oss)')
     def PlaylistChanged(self, playlist):
@@ -605,8 +613,7 @@ class Playlist:
     PlaylistCnt = 0
     props = {
         'PlaylistCount': dbus.UInt32(len(APIService.getLists())),
-        'Orderings': 'Alphabetical', # XXX: Just for now
-        # FIXME: don't know what to place here
+        'Orderings': dbus.Array(['Alphabetical']),
         'ActivePlaylist': dbus.Struct(
             (dbus.Boolean(False), dbus.Struct((dbus.ObjectPath('/'), '', ''))),
             signature="(b(oss))"),
@@ -751,7 +758,7 @@ class Player:
                 #LoopStatusk='None', # None, Track, Playlist
                 Rate=1.0, # only 1.0 for now
                 #Shuffle=False,
-                Metadata=dbus.Dictionary(signature='sv'), # FIXME: should contains something
+                Metadata=dbus.Dictionary(signature='sv'),
                 Volume=0.5,
                 Position=0L,
                 MinimumRate=0.5,
@@ -806,7 +813,9 @@ class Player:
             for item in self.playlist:
                 self.MpYt.fileManager.fetchVideo(item.videoId)
             self.updateProps()
+            Playlist.props['ActivePlaylist'] = dbus.Struct((dbus.Boolean(True), playlist.mprisFormat()))
 
+            self.MpYt.dbusInterface.PlaylistChanged(playlist.mprisFormat())
             self.MpYt.dbusInterface.TrackListReplaced(
                     dbus.Array([dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(i)) for i in range(len(self.playlist))]),
                     dbus.ObjectPath(DBusInterface.PATH + '/video/0'))
@@ -974,7 +983,7 @@ class MprisYoutube:
                 Identity='mpris-youtube',
                 #DesktopEntry='What is this?',
                 SupportedUriSchemes=dbus.Array(signature='s'), # can't open uri from outside
-                SupportedMimeTypes=['audio/wav'])
+                SupportedMimeTypes=['audio/wav', 'audio/mpeg'])
 
     def run(self):
         self.userInterface.start()
