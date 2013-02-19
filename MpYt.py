@@ -49,7 +49,7 @@ class Config:
         config = dict()
         config["storageDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'data')
         config["runtimeDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'var')
-        config["fetchThreads"] = 0
+        config["fetchThreads"] = 2
 
         try:
             with open(Config.CONFIGFILE, 'r') as fin:
@@ -215,6 +215,7 @@ class APIService:
 
 class FileManager:
 
+    ONLINE_EXT = 'online'
     EXTENTIONS = ['mp3', 'wav']
     DOWNLOAD_URI = 'http://www.youtube.com/watch?v=%s'
 
@@ -277,7 +278,7 @@ class FileManager:
             self.logger = Logger('_video%d' % self.idx)
             self.fileType = fileType
 
-            if fileType == 'online': # path = download path
+            if fileType == FileManager.ONLINE_EXT: # path = download path
                 self.logger.info("Init from `%s'" % path)
                 self.canSeek = False
 
@@ -336,10 +337,12 @@ class FileManager:
         def __del__(self):
             try:
                 self.video.close()
-                if not self.dlChild.poll():
-                    self.dlChild.kill()
-                if not self.cvChild.poll():
-                    self.cvChild.kill()
+                if self.fileType == FileManager.ONLINE_EXT:
+                    self.logger.debug('remove online stream')
+                    if not self.dlChild.poll():
+                        self.dlChild.kill()
+                    if not self.cvChild.poll():
+                        self.cvChild.kill()
             except:
                 pass
 
@@ -367,7 +370,7 @@ class FileManager:
             path = os.path.join(config.storageDir, 'video', videoId + '.' + ext)
             if os.path.isfile(path):
                 return FileManager._video(path, ext)
-        return FileManager._video(FileManager.DOWNLOAD_URI % videoId, 'online')
+        return FileManager._video(FileManager.DOWNLOAD_URI % videoId, FileManager.ONLINE_EXT)
 
     def loadSet(self):
         result = set()
@@ -916,11 +919,13 @@ class Player:
             self.props["Metadata"] = {
                     "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(self.idx), variant_level=1),
                     "mpris:artUrl": dbus.UTF8String(videoInfo["snippet"]["thumbnails"]["default"]["url"].encode('utf-8'), variant_level=1),
-                    "mpris:length": dbus.Int64(video.getnframes() / video.getframerate() * 1000000, variant_level=1),
                     "xesam:title": dbus.UTF8String(videoInfo["snippet"]["title"].encode('utf-8'), variant_level=1),
                     # using playlist's title instread
                     "xesam:album": dbus.UTF8String(self.playlistInfo.title.encode('utf-8'), variant_level=1)
                     }
+            # XXX: not so appropriate
+            if video.canSeek:
+                self.props["mpris:length"] = dbus.Int64(video.getnframes() / video.getframerate() * 1000000, variant_level=1)
             self.props["Position"] = 0L
             self.props["PlaybackStatus"] = 'Playing'
             self._player.playAudio(video)
