@@ -2,6 +2,7 @@ lib:
     python-dbus
     google's python api
     youtube-dl
+    pymad
 tool:
     avconv
     ffmpeg
