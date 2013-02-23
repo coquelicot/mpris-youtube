@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
 # Copyright (C) 2013 Fcrh <coquelicot1117@gmail.com>
 #
@@ -237,6 +238,21 @@ class APIService:
                 part='snippet',
                 body=dict(snippet=snippet)
                 ).execute()
+
+    @classmethod
+    def searchVideo(cls, key, token='', size=50):
+
+        youtube = cls.instance(authenticate=False)
+        result = youtube.search().list(
+                part="id,snippet",
+                maxResults=size,
+                type="video",
+                videoSyndicated='true',
+                pageToken=token,
+                q=key
+                ).execute()
+
+        return (result['items'], result['nextPageToken'] if 'nextPageToken' in result else None)
 
 class FileManager:
 
@@ -588,8 +604,7 @@ class DBusInterface(dbus.service.Object):
                     self.MpYt.player.setVolume(value)
                 if prop == 'LoopStatus':
                     self.MpYt.player.setLoop(value)
-
-            # We may ignore the setting of 'Rate' since its max & min are both 1.0
+            #NOTE: We may ignore the setting of 'Rate' since its max & min are both 1.0
 
     @dbus.service.signal(IFACE_PROPERTY, signature='sa{sv}as')
     def PropertiesChanged(self, interface_name, changed_properties, invalidated_properties):
@@ -606,7 +621,7 @@ class UserInterface(threading.Thread):
     def run(self):
 
         while True:
-            cmd = raw_input('>> ').split()
+            cmd = raw_input('>> ').decode('utf-8').split()
             if cmd[0] == 'playlist.list':
                 print ', '.join([item.title for item in Playlist.getLists(fetchItem=False)])
             elif cmd[0] == 'playlist.play':
@@ -633,6 +648,12 @@ class UserInterface(threading.Thread):
                 self.MpYt.player.jump(int(cmd[1])-1)
             elif cmd[0] == 'config.setLoop':
                 self.MpYt.player.setLoop(cmd[1])
+            elif cmd[0] == 'search':
+                results, token = APIService.searchVideo(cmd[1], cmd[2] if len(cmd) > 2 else '', size=10)
+                if token:
+                    print 'NextToken:', token
+                for result in results:
+                    print result['snippet']['title'], '(' + result['id']['videoId'] + ')'
             elif cmd[0] == 'exit':
                 self.MpYt.loop.quit()
 
