@@ -668,7 +668,10 @@ class Playlist:
             data = APIService.getList(title=title, listId=listId)
         self.id = data["id"]
         self.title = data["snippet"]["title"]
+        self.audios = []
 
+        if self.id in Playlist.idCacheSet or self.title in Playlist.titleCacheSet:
+            self.logger.warning('Duplicated object?')
         Playlist.idCacheSet[self.id] = self
         Playlist.titleCacheSet[self.title] = self
 
@@ -801,6 +804,7 @@ class Player:
                 if data:
                     self.stream.write(self.process(data))
                     self.update()
+
                 else:
                     self.stop()
                     self.finish()
@@ -831,7 +835,7 @@ class Player:
                 CanPause=False,
                 CanPlayPause=False,
                 CanSeek=False,
-                CanControl=False)
+                CanControl=True)
         self._copyProps = self.props.copy()
 
         self.trackProps = dict(
