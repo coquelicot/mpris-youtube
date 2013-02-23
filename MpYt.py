@@ -238,16 +238,15 @@ class APIService:
                 body=dict(snippet=snippet)
                 ).execute()
 
-
 class FileManager:
 
     ONLINE_EXT = 'online'
     EXTENTIONS = ['mp3', 'wav']
     DOWNLOAD_URI = 'http://www.youtube.com/watch?v=%s'
 
-    fetchSet = set()
     lock = threading.Lock()
     fnull = open(os.devnull, 'w')
+    logger = Logger('FileManager')
 
     class _fetcher(threading.Thread):
 
@@ -263,6 +262,7 @@ class FileManager:
             FileManager._fetcher.idCnt += 1
             self.logger = Logger('_fetcher%d' % FileManager._fetcher.idCnt)
             self.logger.info('init')
+            self.start()
 
         def run(self):
 
@@ -378,39 +378,40 @@ class FileManager:
                 except:
                     pass
 
-    def __init__(self):
-        self.logger = Logger('FileManager')
-        FileManager.fetchSet = self.loadSet()
-        while FileManager._fetcher.idCnt < config.fetchThreads:
-            FileManager._fetcher().start()
+    @classmethod
+    def fetchVideo(cls, videoId):
+        with cls.lock:
+            if videoId not in cls.fetchSet:
+                cls._fetcher.cond.acquire()
+                cls.fetchSet.add(videoId)
+                cls._fetcher.requests.put(videoId)
+                cls._fetcher.cond.notify()
+                cls._fetcher.cond.release()
 
-    def fetchVideo(self, videoId):
-        with FileManager.lock:
-            if videoId not in self.fetchSet:
-                FileManager._fetcher.cond.acquire()
-                FileManager.fetchSet.add(videoId)
-                FileManager._fetcher.requests.put(videoId)
-                FileManager._fetcher.cond.notify()
-                FileManager._fetcher.cond.release()
-
-    def getVideo(self, videoId):
-        with FileManager.lock:
-            if videoId not in FileManager.fetchSet:
+    @classmethod
+    def getVideo(cls, videoId):
+        with cls.lock:
+            if videoId not in cls.fetchSet:
                 raise RuntimeError("Video not in cache set.")
 
-        for ext in FileManager.EXTENTIONS:
+        for ext in cls.EXTENTIONS:
             path = os.path.join(config.storageDir, 'video', videoId + '.' + ext)
             if os.path.isfile(path):
-                return FileManager._video(path, ext)
-        return FileManager._video(FileManager.DOWNLOAD_URI % videoId, FileManager.ONLINE_EXT)
+                return cls._video(path, ext)
+        return cls._video(cls.DOWNLOAD_URI % videoId, cls.ONLINE_EXT)
 
-    def loadSet(self):
+    @classmethod
+    def loadSet(cls):
         result = set()
         for fileName in os.listdir(os.path.join(config.storageDir, 'video')):
             videoId, ext = fileName.rsplit('.', 1)
-            if ext in FileManager.EXTENTIONS:
+            if ext in cls.EXTENTIONS:
                 result.add(videoId)
         return result
+
+# XXX: How to move these declarations into the class without error QAO
+FileManager.fetchSet = FileManager.loadSet()
+FileManager.fetchers = [FileManager._fetcher() for i in range(config.fetchThreads)]
 
 class DBusInterface(dbus.service.Object):
 
@@ -883,7 +884,7 @@ class Player:
             self.playlist = playlist.audios
             self.playlistInfo = playlist
             for item in self.playlist:
-                self.MpYt.fileManager.fetchVideo(item.id)
+                FileManager.fetchVideo(item.id)
             self.updateProps()
             Playlist.props['ActivePlaylist'] = dbus.Struct((dbus.Boolean(True), playlist.mprisFormat()))
 
@@ -1033,7 +1034,7 @@ class Player:
 
         try:
             videoId = self.playlist[self.idx].id
-            video = self.MpYt.fileManager.getVideo(videoId)
+            video = FileManager.getVideo(videoId)
             youtube = APIService.instance(authenticate=False)
             videoInfo = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]
 
@@ -1070,7 +1071,6 @@ class MprisYoutube:
         self.player = Player(self)
         self.userInterface = UserInterface(self)
         self.dbusInterface = DBusInterface(self)
-        self.fileManager = FileManager()
 
         self.props = dict(
                 CanQuit=True,
