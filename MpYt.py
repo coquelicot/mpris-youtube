@@ -50,6 +50,7 @@ class Config:
         config["storageDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'data')
         config["runtimeDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'var')
         config["fetchThreads"] = 2
+        config["localPlaylistId"] = '_local'
 
         try:
             with open(Config.CONFIGFILE, 'r') as fin:
@@ -110,7 +111,6 @@ class Logger:
     def debug(self, msg):
         if Logger.ENABLE_DEBUG:
             self.log('DEBUG', msg)
-
 
 class APIService:
 
@@ -508,7 +508,7 @@ class DBusInterface(dbus.service.Object):
     @dbus.service.method(IFACE_PLAYLISTS, in_signature='uusb', out_signature='a(oss)')
     def GetPlaylists(self, index, maxCount, order, reverse):
         if order == 'Alphabetical':
-            lists = sorted(Playlist.getLists(), key=lambda obj: obj.title)
+            lists = sorted(Playlist.getLists(fetchItem=False), key=lambda obj: obj.title)
         else:
             raise ValueError('Does not support this order')
         return dbus.Array([item.mprisFormat() for item in lists[index:index+maxCount]])
@@ -615,7 +615,7 @@ class UserInterface(threading.Thread):
                 for i in range(0, len(songList)):
                     print i + 1, songList[i].title, '(' + songList[i].id + ')'
             elif cmd[0] == 'playlistItem.insert':
-                Playlist.getList(cmd[1]).addItem(cmd[2] if len(cmd) > 2 else Playlist.LOCAL_ID)
+                Playlist.getList(cmd[2] if len(cmd) > 2 else Playlist.LOCAL_ID).addItem(cmd[1])
             elif cmd[0] == 'current.next':
                 self.MpYt.player.next()
             elif cmd[0] == 'current.prev':
@@ -638,6 +638,8 @@ class UserInterface(threading.Thread):
 class Playlist:
 
     PlaylistCnt = 0
+    LOCAL_ID = config.localPlaylistId
+
     props = {
         'PlaylistCount': dbus.UInt32(len(APIService.getLists())),
         'Orderings': dbus.Array(['Alphabetical']),
@@ -646,7 +648,8 @@ class Playlist:
             signature="(b(oss))"),
     }
 
-    LOCAL_ID = '_local'
+    idCacheSet = dict()
+    titleCacheSet = dict()
 
     class Item:
 
@@ -656,7 +659,7 @@ class Playlist:
             self.title = data["snippet"]["title"]
             self.thumbnail = data["snippet"]["thumbnails"]["default"]
 
-    def __init__(self, title=None, listId=None, data=None, fetchItem=False):
+    def __init__(self, title=None, listId=None, data=None):
         Playlist.PlaylistCnt += 1
         self.idCnt = Playlist.PlaylistCnt
         self.logger = Logger('Playlist%d' % self.idCnt)
@@ -666,9 +669,12 @@ class Playlist:
         self.id = data["id"]
         self.title = data["snippet"]["title"]
 
-        self.fetchItem = fetchItem
-        if fetchItem:
-            self.audios = [Playlist.Item(item) for item in APIService.getItems(self.id)]
+        Playlist.idCacheSet[self.id] = self
+        Playlist.titleCacheSet[self.title] = self
+
+    def fetchItem(self):
+        self.logger.info('fetch items')
+        self.audios = [Playlist.Item(item) for item in APIService.getItems(self.id)]
 
     def addItem(self, videoId=None, data=None):
 
@@ -695,7 +701,7 @@ class Playlist:
 
     @classmethod
     def pathToId(cls, path):
-        return Playlist._decode(path.rsplit('/', 1)[1])
+        return cls._decode(path.rsplit('/', 1)[1])
 
     @classmethod
     def _encode(cls, string):
@@ -707,14 +713,22 @@ class Playlist:
 
     @classmethod
     def getLists(cls, fetchItem=False):
-        return [Playlist(data=item, fetchItem=fetchItem) for item in APIService.getLists()]
+        return [cls.getList(listId=item['id'], fetchItem=fetchItem, _hintData=item) for item in APIService.getLists()]
 
     @classmethod
-    def getList(cls, title=None, listId=None, fetchItem=True):
-        if title == Playlist.LOCAL_ID:
-            return Playlist.localList
+    def getList(cls, title=None, listId=None, fetchItem=True, _hintData=None):
+        if title == cls.LOCAL_ID or listId == cls.LOCAL_ID:
+            ret = cls.localList
+        elif title in cls.titleCacheSet or listId in cls.idCacheSet:
+            ret = cls.titleCacheSet[title] if title in cls.titleCacheSet else cls.idCacheSet[listId]
+        elif _hintData:
+            ret = cls(data=_hintData)
         else:
-            return Playlist(data=APIService.getList(title=title, listId=listId), fetchItem=fetchItem)
+            ret = cls(data=APIService.getList(title=title, listId=listId))
+
+        if fetchItem:
+            ret.fetchItem()
+        return ret
 
 Playlist.localList = Playlist(data=dict(id=Playlist.LOCAL_ID, snippet=dict(title=Playlist.LOCAL_ID)))
 
