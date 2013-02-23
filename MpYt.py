@@ -175,7 +175,7 @@ class APIService:
         youtube = cls.instance(authenticate=True)
         def callback(token):
             return youtube.playlists().list(
-                    part="id,snippet,contentDetails",
+                    part="id,snippet",
                     pageToken=token,
                     maxResults=50,
                     mine=True
@@ -188,7 +188,7 @@ class APIService:
 
         if listId is not None:
             resp = cls.instance(authenticate=True).playlists().list(
-                    part="id,snippet,contentDetails",
+                    part="id,snippet",
                     id=listId,
                     ).execute()
             if len(resp["items"]) > 0:
@@ -217,6 +217,27 @@ class APIService:
                     ).execute()
 
         return cls._queryAll(callback)
+
+    @classmethod
+    def getVideo(cls, videoId, authenticate=True):
+        youtube = cls.instance(authenticate=authenticate)
+        return youtube.videos().list(
+                part="id,snippet",
+                id=videoId
+                ).execute()['items'][0]
+
+    @classmethod
+    def insertItem(cls, playlistId, videoId, position=None):
+
+        snippet = dict(playlistId=playlistId, resourceId=dict(kind="youtube#video", videoId=videoId))
+        if position:
+            snippet["position"] = position
+
+        cls.instance(authenticate=True).playlistItems().insert(
+                part='snippet',
+                body=dict(snippet=snippet)
+                ).execute()
+
 
 class FileManager:
 
@@ -590,9 +611,11 @@ class UserInterface(threading.Thread):
             elif cmd[0] == 'playlist.play':
                 self.MpYt.player.setPlaylist(Playlist.getList(title=cmd[1], fetchItem=True))
             elif cmd[0] == 'playlistItem.list':
-                titleList = [item.title for item in Playlist.getList(title=cmd[1], fetchItem=True).audios]
-                for i in range(1, len(titleList) + 1):
-                    print i, titleList[i-1]
+                songList = Playlist.getList(title=cmd[1], fetchItem=True).audios
+                for i in range(0, len(songList)):
+                    print i + 1, songList[i].title, '(' + songList[i].id + ')'
+            elif cmd[0] == 'playlistItem.insert':
+                Playlist.getList(cmd[1]).addItem(cmd[2] if len(cmd) > 2 else Playlist.LOCAL_ID)
             elif cmd[0] == 'current.next':
                 self.MpYt.player.next()
             elif cmd[0] == 'current.prev':
@@ -623,14 +646,14 @@ class Playlist:
             signature="(b(oss))"),
     }
 
+    LOCAL_ID = '_local'
+
     class Item:
 
-        def __init__(self, data):
-            self.id = data["id"]
+        def __init__(self, data, isPlaylistItem=True):
+            # accept both video and playlistItem
+            self.id = data["snippet"]["resourceId"]["videoId"] if isPlaylistItem else data["id"]
             self.title = data["snippet"]["title"]
-            self.position = data["snippet"]["position"]
-            #self.description = data["snippet"]["description"]
-            self.videoId = data["snippet"]["resourceId"]["videoId"]
             self.thumbnail = data["snippet"]["thumbnails"]["default"]
 
     def __init__(self, title=None, listId=None, data=None, fetchItem=False):
@@ -642,11 +665,27 @@ class Playlist:
             data = APIService.getList(title=title, listId=listId)
         self.id = data["id"]
         self.title = data["snippet"]["title"]
-        self.count = data["contentDetails"]["itemCount"]
 
         self.fetchItem = fetchItem
         if fetchItem:
             self.audios = [Playlist.Item(item) for item in APIService.getItems(self.id)]
+
+    def addItem(self, videoId=None, data=None):
+
+        if data is None:
+            if videoId:
+                data = Playlist.Item(APIService.getVideo(videoId), isPlaylistItem=False)
+            else:
+                return ValueError('must provide videoId or data')
+        elif not isinstance(data, Playlist.Item):
+            raise TypeError('data must be a instance of Playlist.Item')
+
+        self.logger.info('add item ' + data.id)
+        self.audios.append(data)
+
+        if self.id != Playlist.LOCAL_ID:
+            self.logger.info('update to youtube')
+            APIService.insertItem(self.id, data.id)
 
     def mprisFormat(self):
         return dbus.Struct((self.dbusPath(), self.title, ''), signature="(oss)")
@@ -672,7 +711,12 @@ class Playlist:
 
     @classmethod
     def getList(cls, title=None, listId=None, fetchItem=True):
-        return Playlist(data=APIService.getList(title=title, listId=listId), fetchItem=fetchItem)
+        if title == Playlist.LOCAL_ID:
+            return Playlist.localList
+        else:
+            return Playlist(data=APIService.getList(title=title, listId=listId), fetchItem=fetchItem)
+
+Playlist.localList = Playlist(data=dict(id=Playlist.LOCAL_ID, snippet=dict(title=Playlist.LOCAL_ID)))
 
 class Player:
 
@@ -772,8 +816,8 @@ class Player:
                 CanPlay=False,
                 CanPause=False,
                 CanPlayPause=False,
-                CanSeek=True,
-                CanControl=True)
+                CanSeek=False,
+                CanControl=False)
         self._copyProps = self.props.copy()
 
         self.trackProps = dict(
@@ -821,7 +865,7 @@ class Player:
             self.playlist = playlist.audios
             self.playlistInfo = playlist
             for item in self.playlist:
-                self.MpYt.fileManager.fetchVideo(item.videoId)
+                self.MpYt.fileManager.fetchVideo(item.id)
             self.updateProps()
             Playlist.props['ActivePlaylist'] = dbus.Struct((dbus.Boolean(True), playlist.mprisFormat()))
 
@@ -970,7 +1014,7 @@ class Player:
         self.logger.debug('_spawn')
 
         try:
-            videoId = self.playlist[self.idx].videoId
+            videoId = self.playlist[self.idx].id
             video = self.MpYt.fileManager.getVideo(videoId)
             youtube = APIService.instance(authenticate=False)
             videoInfo = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]
