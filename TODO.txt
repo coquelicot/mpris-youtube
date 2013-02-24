@@ -1,3 +1,2 @@
 1. update metadata when file fetched?
 2. change to local file when file fetched?
-3. try to speed up youtube-dl (set lang takes seconds)

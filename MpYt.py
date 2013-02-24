@@ -826,7 +826,6 @@ class Player:
                 if data:
                     self.stream.write(self.process(data))
                     self.update()
-
                 else:
                     self.stop()
                     self.finish()
