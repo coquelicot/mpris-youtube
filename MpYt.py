@@ -42,7 +42,7 @@ import dbus.mainloop.glib
 
 class Config:
 
-    CONFIGFILE = os.path.join(os.environ['HOME'], '.fcrh', '.mpris-youtube', 'conf.txt')
+    CONFIGFILE = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'conf.txt')
 
     def __init__(self):
 
@@ -50,8 +50,14 @@ class Config:
         config = dict()
         config["storageDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'data')
         config["runtimeDir"] = os.path.join(os.environ['HOME'], '.fcrh', 'mpris-youtube', 'var')
+
         config["fetchThreads"] = 2
+
         config["localPlaylistId"] = '_local'
+
+        config['infoLog'] = True
+        config['warningLog'] = True
+        config['debugLog'] = True
 
         try:
             with open(Config.CONFIGFILE, 'r') as fin:
@@ -72,14 +78,14 @@ class Config:
 
     def saveConfig(self):
 
-        if not os.path.isfile(CONFIG.CONFIGFILE):
+        if not os.path.isfile(Config.CONFIGFILE):
             print "Config file `%s' doesn't exist, creating one." % Config.CONFIGFILE
             os.makedirs(os.path.dirname(Config.CONFIGFILE))
 
         try:
-            with open(CONFIG.CONFIGFILE, 'w') as fout:
+            with open(Config.CONFIGFILE, 'w') as fout:
                 for key, value in self.__dict__.items():
-                    print >>fout, key + '=' + value
+                    print >>fout, key + '=' + str(value)
             print "Config saved."
         except:
             print "Can't save config."
@@ -88,10 +94,6 @@ config = Config()
 
 class Logger:
 
-    ENABLE_DEBUG = True
-    ENABLE_INFO = True
-    ENABLE_WARNING = True
-
     def __init__(self, name='', parent=None):
         self.name = name + ('.' + parent.name if parent is not None else "")
 
@@ -99,18 +101,18 @@ class Logger:
         print "[%s] %s:%s > %s" % (datetime.datetime.now().strftime("%Y/%m/%d-%H:%M:%S"), self.name, cat, msg)
 
     def info(self, msg):
-        if Logger.ENABLE_INFO:
+        if config.infoLog:
             self.log('INFO', msg)
 
     def error(self, msg):
         self.log('ERROR', msg)
 
     def warning(self, msg):
-        if Logger.ENABLE_WARNING:
+        if config.warningLog:
             self.log('WARNING', msg)
 
     def debug(self, msg):
-        if Logger.ENABLE_DEBUG:
+        if config.debugLog:
             self.log('DEBUG', msg)
 
 class APIService:
@@ -648,6 +650,8 @@ class UserInterface(threading.Thread):
                 self.MpYt.player.jump(int(cmd[1])-1)
             elif cmd[0] == 'config.setLoop':
                 self.MpYt.player.setLoop(cmd[1])
+            elif cmd[0] == 'save':
+                config.saveConfig()
             elif cmd[0] == 'search':
                 results, token = APIService.searchVideo(cmd[1], cmd[2] if len(cmd) > 2 else '', size=10)
                 if token:
