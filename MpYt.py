@@ -122,7 +122,7 @@ class APIService:
 
     DEVELOPER_KEY = "AIzaSyAthY54dVayuR5sSdW5hiOPwRAGEkUF1tM"
     CLIENT_ID='544447176625.apps.googleusercontent.com'
-    CLIENT_SECRET='SECRET'
+    CLIENT_SECRET='sM1_c9yLLaqabk6iu4sMm30o'
     AUTH_SCOPE='https://www.googleapis.com/auth/youtube'
 
     __auth_instance = None
