@@ -122,7 +122,7 @@ class APIService:
 
     DEVELOPER_KEY = "AIzaSyAthY54dVayuR5sSdW5hiOPwRAGEkUF1tM"
     CLIENT_ID='544447176625.apps.googleusercontent.com'
-    CLIENT_SECRET='sM1_c9yLLaqabk6iu4sMm30o'
+    CLIENT_SECRET='SECRET'
     AUTH_SCOPE='https://www.googleapis.com/auth/youtube'
 
     __auth_instance = None
@@ -141,7 +141,7 @@ class APIService:
                 flow = OAuth2WebServerFlow(
                         client_id=cls.CLIENT_ID,
                         client_secret=cls.CLIENT_SECRET,
-                        scope=AUTH_SCOPE
+                        scope=cls.AUTH_SCOPE
                         #redirect_uri='urn:ietf:wg:oauth:2.0:oob'
                         )
                 credentials = run(flow, storage)
