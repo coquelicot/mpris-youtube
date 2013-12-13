@@ -69,6 +69,10 @@ class Config:
             print "Can't load config file `%s', using default config." % Config.CONFIGFILE
 
         self.__dict__ = config
+        if not os.path.isdir(self.runtimeDir):
+            os.system('mkdir -p ' + self.runtimeDir)
+        if not os.path.isdir(self.storageDir):
+            os.system('mkdir -p ' + self.storageDir)
 
     def autoConvertType(self, value):
         if value.isdigit():
@@ -298,7 +302,7 @@ class FileManager:
                     '--quiet',
                     '--prefer-free-formats',
                     FileManager.DOWNLOAD_URI % self.videoId,
-                    '-o', os.path.join(config.storageDir, 'video', '%(id)s.%(ext)s'),
+                    '-o', os.path.join(config.storageDir, '%(id)s.%(ext)s'),
                     '-x', '--audio-format', 'mp3']
                 code = subprocess.call(prog, stdout=FileManager.fnull, stderr=FileManager.fnull, close_fds=True)
 
@@ -413,7 +417,7 @@ class FileManager:
                 raise RuntimeError("Video not in cache set.")
 
         for ext in cls.EXTENTIONS:
-            path = os.path.join(config.storageDir, 'video', videoId + '.' + ext)
+            path = os.path.join(config.storageDir, videoId + '.' + ext)
             if os.path.isfile(path):
                 return cls._video(path, ext)
         return cls._video(cls.DOWNLOAD_URI % videoId, cls.ONLINE_EXT)
@@ -421,7 +425,7 @@ class FileManager:
     @classmethod
     def loadSet(cls):
         result = set()
-        for fileName in os.listdir(os.path.join(config.storageDir, 'video')):
+        for fileName in os.listdir(config.storageDir):
             videoId, ext = fileName.rsplit('.', 1)
             if ext in cls.EXTENTIONS:
                 result.add(videoId)

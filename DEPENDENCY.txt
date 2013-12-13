@@ -5,6 +5,7 @@ lib:
     pymad
     python-gobject
     python-httplib2
+    python-pyaudio
 tool:
     avconv
     ffmpeg
