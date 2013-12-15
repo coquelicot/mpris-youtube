@@ -129,41 +129,31 @@ class APIService:
     CLIENT_SECRET='sM1_c9yLLaqabk6iu4sMm30o'
     AUTH_SCOPE='https://www.googleapis.com/auth/youtube'
 
-    __auth_instance = None
-    __instance = None
-
     @classmethod
     def instance(cls, authenticate=False):
         while True:
             try:
                 if not authenticate:
-                    if not cls.__instance:
-                        cls.__instance = build(cls.YOUTUBE_API_SERVICE_NAME, cls.YOUTUBE_API_VERSION, developerKey=cls.DEVELOPER_KEY)
-                    return cls.__instance
+                    return build(cls.YOUTUBE_API_SERVICE_NAME, cls.YOUTUBE_API_VERSION, developerKey=cls.DEVELOPER_KEY)
 
-                if cls.__auth_instance is None:
-                    storage = Storage('mpris-youtube', os.getlogin())
-                    credentials = storage.get()
+                storage = Storage('mpris-youtube', os.getlogin())
+                credentials = storage.get()
 
-                    if credentials is None:
-                        flow = OAuth2WebServerFlow(
-                                client_id=cls.CLIENT_ID,
-                                client_secret=cls.CLIENT_SECRET,
-                                scope=cls.AUTH_SCOPE
-                                #redirect_uri='urn:ietf:wg:oauth:2.0:oob'
-                                )
-                        credentials = run(flow, storage)
+                if credentials is None:
+                    flow = OAuth2WebServerFlow(
+                            client_id=cls.CLIENT_ID,
+                            client_secret=cls.CLIENT_SECRET,
+                            scope=cls.AUTH_SCOPE
+                            #redirect_uri='urn:ietf:wg:oauth:2.0:oob'
+                            )
+                    credentials = run(flow, storage)
 
-                    http = httplib2.Http()
-                    credentials.authorize(http)
-                    cls.__auth_instance = build(
-                            cls.YOUTUBE_API_SERVICE_NAME,
-                            cls.YOUTUBE_API_VERSION,
-                            http=http)
-
-                    cls.__authenticate = True
-
-                return cls.__auth_instance
+                http = httplib2.Http()
+                credentials.authorize(http)
+                return build(
+                        cls.YOUTUBE_API_SERVICE_NAME,
+                        cls.YOUTUBE_API_VERSION,
+                        http=http)
 
             except Exception as e:
                 print e
