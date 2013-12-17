@@ -164,7 +164,16 @@ class APIService:
 
     @classmethod
     def getMetadata(cls, videoId):
-        return requests.get(cls.SHIK_API_URL, params={'youtube_id' : videoId}).json()
+
+        youtube = APIService.instance(authenticate=False)
+        youtubeData = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]["snippet"]
+        shikData = requests.get(cls.SHIK_API_URL, params={'youtube_id' : videoId}).json()
+
+        return {
+            "artist": shikData["artist"],
+            "thumbnail": youtubeData["thumbnails"]["default"]["url"].encode('utf-8'),
+            "title": youtubeData["title"].encode('utf-8')
+        }
 
     @classmethod
     def _queryAll(cls, callback):
@@ -1069,18 +1078,15 @@ class Player:
         try:
             videoId = self.playlist[self.idx].id
             video = FileManager.getVideo(videoId)
-            youtube = APIService.instance(authenticate=False)
-            videoInfo = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]
             metadata = APIService.getMetadata(videoId)
 
             self.props["Metadata"] = {
                     "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(self.idx), variant_level=1),
-                    "mpris:artUrl": dbus.UTF8String(videoInfo["snippet"]["thumbnails"]["default"]["url"].encode('utf-8'), variant_level=1),
-                    "xesam:title": dbus.UTF8String(videoInfo["snippet"]["title"].encode('utf-8'), variant_level=1),
-                    "xesam:artist": dbus.UTF8String(metadata['artist'].encode('utf-8'), variant_level=1),
-                    # using playlist's title instread
+                    "mpris:artUrl": dbus.UTF8String(metadata["thumbnail"], variant_level=1),
+                    "xesam:title": dbus.UTF8String(metadata["title"], variant_level=1),
+                    "xesam:artist": dbus.UTF8String(metadata['artist'], variant_level=1),
                     "xesam:album": dbus.UTF8String(self.playlistInfo.title.encode('utf-8'), variant_level=1)
-                    }
+            }
             # XXX: not so appropriate
             if video.canSeek:
                 self.props["Metadata"]["mpris:length"] = dbus.Int64(video.getnframes() / video.getframerate() * 1000000, variant_level=1)
