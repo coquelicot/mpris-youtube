@@ -170,7 +170,7 @@ class APIService:
         shikData = requests.get(cls.SHIK_API_URL, params={'youtube_id' : videoId}).json()
 
         return {
-            "artist": shikData["artist"],
+            "artist": [shikData["artist"]],
             "thumbnail": youtubeData["thumbnails"]["default"]["url"].encode('utf-8'),
             "title": youtubeData["title"].encode('utf-8')
         }
@@ -1084,7 +1084,7 @@ class Player:
                     "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(self.idx), variant_level=1),
                     "mpris:artUrl": dbus.UTF8String(metadata["thumbnail"], variant_level=1),
                     "xesam:title": dbus.UTF8String(metadata["title"], variant_level=1),
-                    "xesam:artist": dbus.UTF8String(metadata['artist'], variant_level=1),
+                    "xesam:artist": dbus.Array([dbus.UTF8String(s) for s in metadata['artist']]),
                     "xesam:album": dbus.UTF8String(self.playlistInfo.title.encode('utf-8'), variant_level=1)
             }
             # XXX: not so appropriate
