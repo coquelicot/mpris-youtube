@@ -1084,7 +1084,7 @@ class Player:
                     "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(self.idx), variant_level=1),
                     "mpris:artUrl": dbus.UTF8String(metadata["thumbnail"], variant_level=1),
                     "xesam:title": dbus.UTF8String(metadata["title"], variant_level=1),
-                    "xesam:artist": dbus.Array([dbus.UTF8String(s) for s in metadata['artist']]),
+                    "xesam:artist": dbus.Array([dbus.UTF8String(s.encode('utf-8')) for s in metadata['artist']]),
                     "xesam:album": dbus.UTF8String(self.playlistInfo.title.encode('utf-8'), variant_level=1)
             }
             # XXX: not so appropriate
