@@ -8,6 +8,7 @@ sudo apt-get install \
     python-pyaudio \
     python-keyring \
     python-pymad \
+    python-requests \
     youtube-dl \
     libav-tools
 sudo pip install --upgrade google-api-python-client
