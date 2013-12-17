@@ -6,6 +6,7 @@ lib:
     python-gobject
     python-httplib2
     python-pyaudio
+    python-requests
 tool:
     avconv
     ffmpeg

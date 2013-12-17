@@ -29,6 +29,7 @@ import mad
 import wave
 import pyaudio
 import audioop
+import requests
 
 from apiclient.discovery import build
 from oauth2client.client import OAuth2WebServerFlow
@@ -121,6 +122,8 @@ class Logger:
 
 class APIService:
 
+    SHIK_API_URL = "http://mix2.shikchen.com:5000/predict"
+
     YOUTUBE_API_SERVICE_NAME = "youtube"
     YOUTUBE_API_VERSION = "v3"
 
@@ -158,6 +161,10 @@ class APIService:
             except Exception as e:
                 print e
                 time.sleep(3)
+
+    @classmethod
+    def getMetadata(cls, videoId):
+        return requests.get(cls.SHIK_API_URL, params={'youtube_id' : videoId}).json()
 
     @classmethod
     def _queryAll(cls, callback):
@@ -1063,11 +1070,13 @@ class Player:
             video = FileManager.getVideo(videoId)
             youtube = APIService.instance(authenticate=False)
             videoInfo = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]
+            metadata = APIService.getMetadata(videoId)
 
             self.props["Metadata"] = {
                     "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(self.idx), variant_level=1),
                     "mpris:artUrl": dbus.UTF8String(videoInfo["snippet"]["thumbnails"]["default"]["url"].encode('utf-8'), variant_level=1),
                     "xesam:title": dbus.UTF8String(videoInfo["snippet"]["title"].encode('utf-8'), variant_level=1),
+                    "xesam:artist": dbus.UTF8String(metadata['artist'].encode('utf-8'), variant_level=1),
                     # using playlist's title instread
                     "xesam:album": dbus.UTF8String(self.playlistInfo.title.encode('utf-8'), variant_level=1)
                     }
