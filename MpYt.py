@@ -129,8 +129,11 @@ class SystemService:
     @classmethod
     def _pulse_bus(cls):
         if cls.PULSE_BUS is None:
-            obj = dbus.SessionBus().get_object('org.PulseAudio1', '/org/pulseaudio/server_lookup1')
-            busAddr = obj.Get('org.PulseAudio.ServerLookup1', 'Address')
+            if 'PULSE_DBUS_SERVER' in os.environ:
+                busAddr = os.environ['PULSE_DBUS_SERVER']
+            else:
+                obj = dbus.SessionBus().get_object('org.PulseAudio1', '/org/pulseaudio/server_lookup1')
+                busAddr = obj.Get('org.PulseAudio.ServerLookup1', 'Address')
             cls.PULSE_BUS = dbus.connection.Connection(busAddr)
         return cls.PULSE_BUS
 
@@ -158,7 +161,7 @@ class SystemService:
     # FIXME: it's not watching
     @classmethod
     def watchVolume(cls, callback):
-        cls._pulse_bus().add_signal_receiver(callback, dbus_interface='org.PulseAudio.Core1.Device', signal_name='VolumeUpdated') # XXX: verify me
+        cls._pulse_bus().add_signal_receiver(callback, dbus_interface='org.PulseAudio.Core1.Device', signal_name='VolumeUpdated')
 
 class APIService:
 

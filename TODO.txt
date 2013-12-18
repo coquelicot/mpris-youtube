@@ -4,3 +4,4 @@
 4. implement tracklist of MPRIS 2.2
 5. automatically normalize volume?
 6. improve the mechanism of playing online stream
+7. fix bug of receiving volumeUpdate signal
