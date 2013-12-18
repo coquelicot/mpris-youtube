@@ -122,6 +122,44 @@ class Logger:
         if config.debugLog:
             self.log('DEBUG', msg)
 
+class SystemService:
+
+    PULSE_BUS = None
+
+    @classmethod
+    def _pulse_bus(cls):
+        if cls.PULSE_BUS is None:
+            obj = dbus.SessionBus().get_object('org.PulseAudio1', '/org/pulseaudio/server_lookup1')
+            busAddr = obj.Get('org.PulseAudio.ServerLookup1', 'Address')
+            cls.PULSE_BUS = dbus.connection.Connection(busAddr)
+        return cls.PULSE_BUS
+
+    @classmethod
+    def _pulse_sinks(cls):
+       bus = cls._pulse_bus()
+       pulseCore = bus.get_object(object_path='/org/pulseaudio/core1')
+       sinkPaths = pulseCore.Get('org.PulseAudio.Core1', 'Sinks', dbus_interface='org.freedesktop.DBus.Properties')
+       return [bus.get_object(object_path=path) for path in sinkPaths]
+
+    # FIXME: we'll only concern the first sink.
+    @classmethod
+    def setVolume(cls, volume): # 0.0 ~ 1.0
+        sink = cls._pulse_sinks()[0]
+        value = dbus.Array([dbus.UInt32(int(volume * 65536))])
+        sink.Set('org.PulseAudio.Core1.Device', 'Volume', value, dbus_interface='org.freedesktop.DBus.Properties')
+
+    # FIXME: we'll only concern the first sink.
+    @classmethod
+    def getVolumes(cls):
+        sink = cls._pulse_sinks()[0]
+        values = sink.Get('org.PulseAudio.Core1.Device', 'Volume', dbus_interface='org.freedesktop.DBus.Properties')
+        return [value / 65536.0 for value in values]
+
+    # FIXME: it's not watching
+    @classmethod
+    def watchVolume(cls, callback):
+        cls._pulse_bus().add_signal_receiver(callback, dbus_interface='org.PulseAudio.Core1.Device', signal_name='VolumeUpdated') # XXX: verify me
+
 class APIService:
 
     SHIK_API_URL = "http://mix2.shikchen.com:5000/predict"
@@ -803,14 +841,13 @@ class Player:
 
     class _player(threading.Thread):
 
-        def __init__ (self, lock, update, finish, process):
+        def __init__ (self, lock, update, finish):
             threading.Thread.__init__(self)
             self.daemon = True
 
             self.audio = None
             self.update = update
             self.finish = finish
-            self.process = process
             self.stream = None
             self.cond = threading.Condition(lock)
 
@@ -864,7 +901,7 @@ class Player:
 
                 data = self.audio.read()
                 if data:
-                    self.stream.write(self.process(data))
+                    self.stream.write(data)
                     self.update()
                 else:
                     self.stop()
@@ -886,7 +923,7 @@ class Player:
                 Rate=1.0, # only 1.0 for now
                 #Shuffle=False,
                 Metadata=dbus.Dictionary(signature='sv'),
-                Volume=0.5,
+                Volume=SystemService.getVolumes()[0], # FIXME: only concern the first one
                 Position=0L,
                 MinimumRate=1.0,
                 MaximumRate=1.0,
@@ -898,12 +935,17 @@ class Player:
                 CanSeek=False,
                 CanControl=True)
         self._copyProps = self.props.copy()
+        SystemService.watchVolume(self.volumeWatcher)
 
         self.trackProps = dict(
                 Tracks=dbus.Array([], signature='o'),
                 CanEditTracks=False)
 
-        self._player = Player._player(self.lock, self.updateCallback, self.finishCallback, self.processCallback)
+        self._player = Player._player(self.lock, self.updateCallback, self.finishCallback)
+
+    def volumeWatcher(self, volumes):
+        self.props["Volume"] = volumes[0]
+        self.updateProps()
 
     def updateProps(self):
         self.logger.debug('updateProps')
@@ -958,9 +1000,7 @@ class Player:
 
     def setVolume(self, value):
         with self.lock:
-            value = min(1, max(0, value))
-            self.props['Volume'] = value
-            self.MpYt.dbusInterface.PropertiesChanged(DBusInterface.IFACE_PLAYER, {'Volume': dbus.Double(value)}, dbus.Array(signature='s'))
+            SystemService.setVolume(value)
 
     def setLoop(self, value):
         with self.lock:
@@ -1085,10 +1125,6 @@ class Player:
 
     def updateCallback(self):
         self.props["Position"] = long(self._player.getPos())
-
-    def processCallback(self, data):
-        # XXX: Not so appropriate?
-        return audioop.mul(data, self._player.audio.getsampwidth(), self.props["Volume"])
 
     def _spawn(self):
         self.logger.debug('_spawn')
