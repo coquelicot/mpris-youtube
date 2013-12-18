@@ -1100,14 +1100,12 @@ class Player:
             self.props["Metadata"] = {
                     "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(self.idx), variant_level=1),
                     "mpris:artUrl": dbus.UTF8String(metadata["thumbnail"], variant_level=1),
+                    "mpris:length": dbus.Int64(video.getnframes() / video.getframerate() * 1000000, variant_level=1),
                     "xesam:title": dbus.UTF8String(metadata["title"], variant_level=1),
                     "xesam:album": dbus.UTF8String(self.playlistInfo.title.encode('utf-8'), variant_level=1)
             }
             if len(metadata["artist"]) > 0:
                 self.props["Metadata"]["xesam:artist"] = dbus.Array([dbus.UTF8String(s) for s in metadata['artist']])
-            # XXX: not so appropriate
-            if video.canSeek:
-                self.props["Metadata"]["mpris:length"] = dbus.Int64(video.getnframes() / video.getframerate() * 1000000, variant_level=1)
             self.props["Position"] = 0L
             self.props["PlaybackStatus"] = 'Playing'
             self._player.playAudio(video)
