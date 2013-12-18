@@ -62,6 +62,8 @@ class Config:
         config['warningLog'] = True
         config['debugLog'] = True
 
+        config['cacheFormat'] = 'wav'
+
         try:
             with open(Config.CONFIGFILE, 'r') as fin:
                 for line in fin.readlines():
@@ -334,7 +336,7 @@ class FileManager:
                     '--prefer-free-formats',
                     FileManager.DOWNLOAD_URI % self.videoId,
                     '-o', os.path.join(config.storageDir, '%(id)s.%(ext)s'),
-                    '-x', '--audio-format', 'mp3']
+                    '-x', '--audio-format', config.cacheFormat]
                 code = subprocess.call(prog, stdout=FileManager.fnull, stderr=FileManager.fnull, close_fds=True)
 
                 if code == 0:
