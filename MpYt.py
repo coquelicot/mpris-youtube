@@ -24,12 +24,14 @@ import datetime
 import threading
 import subprocess
 import httplib2
+import traceback
 
 import mad
 import wave
 import pyaudio
 import audioop
 import requests
+import opencc
 
 from apiclient.discovery import build
 from oauth2client.client import OAuth2WebServerFlow
@@ -132,8 +134,19 @@ class APIService:
     CLIENT_SECRET='sM1_c9yLLaqabk6iu4sMm30o'
     AUTH_SCOPE='https://www.googleapis.com/auth/youtube'
 
+    OPENCC_INST = None
+
     @classmethod
-    def instance(cls, authenticate=False):
+    def _opencc(cls):
+        if cls.OPENCC_INST is None:
+            cls.OPENCC_INST = opencc.OpenCC()
+            cls.OPENCC_INST.od = cls.OPENCC_INST.libopencc.opencc_open(0) # hack for bug of opencc..
+            cls.OPENCC_INST.dict_load('simp_to_trad_characters.ocd', opencc.DictType.DATRIE)
+            cls.OPENCC_INST.dict_load('simp_to_trad_phrases.ocd', opencc.DictType.DATRIE)
+        return cls.OPENCC_INST
+
+    @classmethod
+    def _youtube(cls, authenticate=False):
         while True:
             try:
                 if not authenticate:
@@ -165,14 +178,15 @@ class APIService:
     @classmethod
     def getMetadata(cls, videoId):
 
-        youtube = APIService.instance(authenticate=False)
+        opencc = cls._opencc()
+        youtube = APIService._youtube(authenticate=False)
         youtubeData = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]["snippet"]
         shikData = requests.get(cls.SHIK_API_URL, params={'youtube_id' : videoId}).json()
 
         return {
-            "artist": [shikData["artist"]],
+            "artist": [opencc.convert(shikData["artist"].encode('utf-8'))],
             "thumbnail": youtubeData["thumbnails"]["default"]["url"].encode('utf-8'),
-            "title": youtubeData["title"].encode('utf-8')
+            "title": opencc.convert(youtubeData["title"].encode('utf-8'))
         }
 
     @classmethod
@@ -193,7 +207,7 @@ class APIService:
     @classmethod
     def getLists(cls):
 
-        youtube = cls.instance(authenticate=True)
+        youtube = cls._youtube(authenticate=True)
         def callback(token):
             return youtube.playlists().list(
                     part="id,snippet",
@@ -208,7 +222,7 @@ class APIService:
     def getList(cls, title=None, listId=None):
 
         if listId is not None:
-            resp = cls.instance(authenticate=True).playlists().list(
+            resp = cls._youtube(authenticate=True).playlists().list(
                     part="id,snippet",
                     id=listId,
                     ).execute()
@@ -228,7 +242,7 @@ class APIService:
     @classmethod
     def getItems(cls, playlistId, authenticate=True):
 
-        youtube = cls.instance(authenticate=authenticate)
+        youtube = cls._youtube(authenticate=authenticate)
         def callback(token):
             return youtube.playlistItems().list(
                     part="id,snippet",
@@ -241,7 +255,7 @@ class APIService:
 
     @classmethod
     def getVideo(cls, videoId, authenticate=True):
-        youtube = cls.instance(authenticate=authenticate)
+        youtube = cls._youtube(authenticate=authenticate)
         return youtube.videos().list(
                 part="id,snippet",
                 id=videoId
@@ -254,7 +268,7 @@ class APIService:
         if position:
             snippet["position"] = position
 
-        cls.instance(authenticate=True).playlistItems().insert(
+        cls._youtube(authenticate=True).playlistItems().insert(
                 part='snippet',
                 body=dict(snippet=snippet)
                 ).execute()
@@ -262,7 +276,7 @@ class APIService:
     @classmethod
     def searchVideo(cls, key, token='', size=50):
 
-        youtube = cls.instance(authenticate=False)
+        youtube = cls._youtube(authenticate=False)
         result = youtube.search().list(
                 part="id,snippet",
                 maxResults=size,
@@ -1084,7 +1098,7 @@ class Player:
                     "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(self.idx), variant_level=1),
                     "mpris:artUrl": dbus.UTF8String(metadata["thumbnail"], variant_level=1),
                     "xesam:title": dbus.UTF8String(metadata["title"], variant_level=1),
-                    "xesam:artist": dbus.Array([dbus.UTF8String(s.encode('utf-8')) for s in metadata['artist']]),
+                    "xesam:artist": dbus.Array([dbus.UTF8String(s) for s in metadata['artist']]),
                     "xesam:album": dbus.UTF8String(self.playlistInfo.title.encode('utf-8'), variant_level=1)
             }
             # XXX: not so appropriate
@@ -1094,6 +1108,7 @@ class Player:
             self.props["PlaybackStatus"] = 'Playing'
             self._player.playAudio(video)
         except:
+            traceback.print_exc()
             self.logger.warning("Something bad happened! Skipping this video instead.")
             self.finishCallback()
 
