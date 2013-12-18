@@ -183,8 +183,11 @@ class APIService:
         youtubeData = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]["snippet"]
         shikData = requests.get(cls.SHIK_API_URL, params={'youtube_id' : videoId}).json()
 
+        artists = []
+        if shikData["artist"] is not None:
+            artists.append(opencc.convert(shikData["artist"].encode('utf-8')))
         return {
-            "artist": [opencc.convert(shikData["artist"].encode('utf-8'))],
+            "artist": artists,
             "thumbnail": youtubeData["thumbnails"]["default"]["url"].encode('utf-8'),
             "title": opencc.convert(youtubeData["title"].encode('utf-8'))
         }
@@ -1098,9 +1101,10 @@ class Player:
                     "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(self.idx), variant_level=1),
                     "mpris:artUrl": dbus.UTF8String(metadata["thumbnail"], variant_level=1),
                     "xesam:title": dbus.UTF8String(metadata["title"], variant_level=1),
-                    "xesam:artist": dbus.Array([dbus.UTF8String(s) for s in metadata['artist']]),
                     "xesam:album": dbus.UTF8String(self.playlistInfo.title.encode('utf-8'), variant_level=1)
             }
+            if len(metadata["artist"]) > 0:
+                self.props["Metadata"]["xesam:artist"] = dbus.Array([dbus.UTF8String(s) for s in metadata['artist']])
             # XXX: not so appropriate
             if video.canSeek:
                 self.props["Metadata"]["mpris:length"] = dbus.Int64(video.getnframes() / video.getframerate() * 1000000, variant_level=1)
