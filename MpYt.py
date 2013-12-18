@@ -178,12 +178,12 @@ class APIService:
                 time.sleep(3)
 
     @classmethod
-    def getMetadata(cls, videoId):
+    def getMetadata(cls, audioId):
 
         opencc = cls._opencc()
         youtube = APIService._youtube(authenticate=False)
-        youtubeData = youtube.videos().list(id=videoId, part="snippet").execute()["items"][0]["snippet"]
-        shikData = requests.get(cls.SHIK_API_URL, params={'youtube_id' : videoId}).json()
+        youtubeData = youtube.videos().list(id=audioId, part="snippet").execute()["items"][0]["snippet"]
+        shikData = requests.get(cls.SHIK_API_URL, params={'youtube_id' : audioId}).json()
 
         artists = []
         if shikData["artist"] is not None:
@@ -259,17 +259,17 @@ class APIService:
         return cls._queryAll(callback)
 
     @classmethod
-    def getVideo(cls, videoId, authenticate=True):
+    def getAudio(cls, audioId, authenticate=True):
         youtube = cls._youtube(authenticate=authenticate)
         return youtube.videos().list(
                 part="id,snippet",
-                id=videoId
+                id=audioId
                 ).execute()['items'][0]
 
     @classmethod
-    def insertItem(cls, playlistId, videoId, position=None):
+    def insertItem(cls, playlistId, audioId, position=None):
 
-        snippet = dict(playlistId=playlistId, resourceId=dict(kind="youtube#video", videoId=videoId))
+        snippet = dict(playlistId=playlistId, resourceId=dict(kind="youtube#video", videoId=audioId))
         if position:
             snippet["position"] = position
 
@@ -279,7 +279,7 @@ class APIService:
                 ).execute()
 
     @classmethod
-    def searchVideo(cls, key, token='', size=50):
+    def searchAudio(cls, key, token='', size=50):
 
         youtube = cls._youtube(authenticate=False)
         result = youtube.search().list(
@@ -313,7 +313,7 @@ class FileManager:
             threading.Thread.__init__(self)
             self.daemon = True
 
-            self.videoId = None
+            self.audioId = None
             FileManager._fetcher.idCnt += 1
             self.logger = Logger('_fetcher%d' % FileManager._fetcher.idCnt)
             self.logger.info('init')
@@ -326,37 +326,37 @@ class FileManager:
                 FileManager._fetcher.cond.acquire()
                 while FileManager._fetcher.requests.empty():
                     FileManager._fetcher.cond.wait()
-                self.videoId = FileManager._fetcher.requests.get()
+                self.audioId = FileManager._fetcher.requests.get()
                 FileManager._fetcher.cond.release()
-                self.logger.info('start to fetch %s' % self.videoId)
+                self.logger.info('start to fetch %s' % self.audioId)
 
                 prog = [
                     'youtube-dl',
                     '--quiet',
                     '--prefer-free-formats',
-                    FileManager.DOWNLOAD_URI % self.videoId,
+                    FileManager.DOWNLOAD_URI % self.audioId,
                     '-o', os.path.join(config.storageDir, '%(id)s.%(ext)s'),
                     '-x', '--audio-format', config.cacheFormat]
                 code = subprocess.call(prog, stdout=FileManager.fnull, stderr=FileManager.fnull, close_fds=True)
 
                 if code == 0:
-                    self.logger.info("video %s fetched" % self.videoId)
+                    self.logger.info("audio %s fetched" % self.audioId)
                 else:
                     if code < 0:
                         self.logger.warning('Youtube-dl killed by signal %d' % -code)
                     elif code > 0:
                         self.logger.warning("Youtube-dl doesn't return 0!!")
                     with FileManager.lock:
-                        FileManager.fetchSet.remove(self.videoId)
+                        FileManager.fetchSet.remove(self.audioId)
 
-    class _video:
+    class _audio:
 
-        VideoCnt = 0
+        AudioCnt = 0
 
         def __init__(self, path, fileType):
-            FileManager._video.VideoCnt += 1
-            self.idx = FileManager._video.VideoCnt
-            self.logger = Logger('_video%d' % self.idx)
+            FileManager._audio.AudioCnt += 1
+            self.idx = FileManager._audio.AudioCnt
+            self.logger = Logger('_audio%d' % self.idx)
             self.fileType = fileType
             self.closed = False
 
@@ -374,21 +374,21 @@ class FileManager:
                 os.mkfifo(dlPath)
                 os.mkfifo(cvPath)
 
-                dlProg = ['youtube-dl', '--quiet', '--max-quality', '43', '--prefer-free-formats', path, '-o', dlPath]
+                dlProg = ['youtube-dl', '--quiet', '--max-quality', '140', '--prefer-free-formats', path, '-o', dlPath]
                 cvProg = ['avconv', '-y', '-i', dlPath, cvPath]
                 self.dlChild = subprocess.Popen(dlProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
                 self.cvChild = subprocess.Popen(cvProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
                 self.logger.debug("Init dlChild & cvChild")
 
-                self.video = mad.MadFile(cvPath)
+                self.audio = mad.MadFile(cvPath)
                 self.logger.debug("Init madfile")
                 self.getsampwidth = lambda: 2 # verify me
-                self.getnchannels = lambda: 1 if self.video.mode == mad.MODE_SINGLE_CHANNEL else 2 # verify me!
+                self.getnchannels = lambda: 1 if self.audio.mode == mad.MODE_SINGLE_CHANNEL else 2 # verify me!
                 self.getnframes = lambda: 0
-                self.getframerate = self.video.samplerate
-                self.read = self.video.read
-                self.tell = lambda: int(self.video.current_time() * self.video.samplerate())
-                #self.setPos = lambda pos: self.video.seek_time(pos / self.video.samplerate() * 1000)
+                self.getframerate = self.audio.samplerate
+                self.read = self.audio.read
+                self.tell = lambda: int(self.audio.current_time() * self.audio.samplerate())
+                #self.setPos = lambda pos: self.audio.seek_time(pos / self.audio.samplerate() * 1000)
 
             else: # path = local file path
                 self.canSeek = True
@@ -409,16 +409,16 @@ class FileManager:
                 else:
                     raise ValueError('What is this?')
 
-                self.video = wave.open(path, 'rb')
-                self.getsampwidth = self.video.getsampwidth
-                self.getnchannels = self.video.getnchannels
-                self.getnframes = self.video.getnframes
-                self.getframerate = self.video.getframerate
-                self.read = lambda: self.video.readframes(1024)
-                self.tell = self.video.tell
-                self.setPos = self.video.setpos
+                self.audio = wave.open(path, 'rb')
+                self.getsampwidth = self.audio.getsampwidth
+                self.getnchannels = self.audio.getnchannels
+                self.getnframes = self.audio.getnframes
+                self.getframerate = self.audio.getframerate
+                self.read = lambda: self.audio.readframes(1024)
+                self.tell = self.audio.tell
+                self.setPos = self.audio.setpos
 
-            self.logger.debug('Finish init video.')
+            self.logger.debug('Finish init audio.')
 
         def close(self):
             if not self.closed:
@@ -433,39 +433,39 @@ class FileManager:
                             self.cvChild.kill()
                             self.cvChild.wait()
                     else:
-                        self.video.close()
+                        self.audio.close()
                 except:
                     pass
 
     @classmethod
-    def fetchVideo(cls, videoId):
+    def fetchAudio(cls, audioId):
         with cls.lock:
-            if videoId not in cls.fetchSet:
+            if audioId not in cls.fetchSet:
                 cls._fetcher.cond.acquire()
-                cls.fetchSet.add(videoId)
-                cls._fetcher.requests.put(videoId)
+                cls.fetchSet.add(audioId)
+                cls._fetcher.requests.put(audioId)
                 cls._fetcher.cond.notify()
                 cls._fetcher.cond.release()
 
     @classmethod
-    def getVideo(cls, videoId):
+    def getAudio(cls, audioId):
         with cls.lock:
-            if videoId not in cls.fetchSet:
-                raise RuntimeError("Video not in cache set.")
+            if audioId not in cls.fetchSet:
+                raise RuntimeError("Audio not in cache set.")
 
         for ext in cls.EXTENTIONS:
-            path = os.path.join(config.storageDir, videoId + '.' + ext)
+            path = os.path.join(config.storageDir, audioId + '.' + ext)
             if os.path.isfile(path):
-                return cls._video(path, ext)
-        return cls._video(cls.DOWNLOAD_URI % videoId, cls.ONLINE_EXT)
+                return cls._audio(path, ext)
+        return cls._audio(cls.DOWNLOAD_URI % audioId, cls.ONLINE_EXT)
 
     @classmethod
     def loadSet(cls):
         result = set()
         for fileName in os.listdir(config.storageDir):
-            videoId, ext = fileName.rsplit('.', 1)
+            audioId, ext = fileName.rsplit('.', 1)
             if ext in cls.EXTENTIONS:
-                result.add(videoId)
+                result.add(audioId)
         return result
 
 # XXX: How to move these declarations into the class without error QAO
@@ -694,7 +694,7 @@ class UserInterface(threading.Thread):
             elif cmd[0] == 'save':
                 config.saveConfig()
             elif cmd[0] == 'search':
-                results, token = APIService.searchVideo(cmd[1], cmd[2] if len(cmd) > 2 else '', size=10)
+                results, token = APIService.searchAudio(cmd[1], cmd[2] if len(cmd) > 2 else '', size=10)
                 if token:
                     print 'NextToken:', token
                 for result in results:
@@ -721,7 +721,7 @@ class Playlist:
     class Item:
 
         def __init__(self, data, isPlaylistItem=True):
-            # accept both video and playlistItem
+            # accept both audio and playlistItem
             self.id = data["snippet"]["resourceId"]["videoId"] if isPlaylistItem else data["id"]
             self.title = data["snippet"]["title"]
             self.thumbnail = data["snippet"]["thumbnails"]["default"]
@@ -746,13 +746,13 @@ class Playlist:
         self.logger.info('fetch items')
         self.audios = [Playlist.Item(item) for item in APIService.getItems(self.id)]
 
-    def addItem(self, videoId=None, data=None):
+    def addItem(self, audioId=None, data=None):
 
         if data is None:
-            if videoId:
-                data = Playlist.Item(APIService.getVideo(videoId), isPlaylistItem=False)
+            if audioId:
+                data = Playlist.Item(APIService.getAudio(audioId), isPlaylistItem=False)
             else:
-                return ValueError('must provide videoId or data')
+                return ValueError('must provide audioId or data')
         elif not isinstance(data, Playlist.Item):
             raise TypeError('data must be a instance of Playlist.Item')
 
@@ -812,7 +812,7 @@ class Player:
             threading.Thread.__init__(self)
             self.daemon = True
 
-            self.video = None
+            self.audio = None
             self.update = update
             self.finish = finish
             self.process = process
@@ -821,15 +821,15 @@ class Player:
 
             self.start()
 
-        def playAudio(self, video):
+        def playAudio(self, audio):
             if self.stream is not None:
                 self.stream.close()
 
-            self.video = video
+            self.audio = audio
             self.stream = Player.audio.open(
-                    format=Player.audio.get_format_from_width(video.getsampwidth()),
-                    channels=video.getnchannels(),
-                    rate=video.getframerate(),
+                    format=Player.audio.get_format_from_width(audio.getsampwidth()),
+                    channels=audio.getnchannels(),
+                    rate=audio.getframerate(),
                     output=True)
             self.cond.notify()
 
@@ -841,23 +841,23 @@ class Player:
             self.cond.notify()
 
         def seek(self, offset):
-            newPos = self.video.tell() + int(offset * self.video.getframerate() / 1000000)
-            self.video.setPos(min(max(0, newPos), self.video.getnframes()))
+            newPos = self.audio.tell() + int(offset * self.audio.getframerate() / 1000000)
+            self.audio.setPos(min(max(0, newPos), self.audio.getnframes()))
 
         def setPos(self, pos):
-            newPos = int(pos * self.video.getframerate() / 1000000)
-            if newPos >= 0 and newPos <= self.video.getnframes():
-                self.video.setPos(newPos)
+            newPos = int(pos * self.audio.getframerate() / 1000000)
+            if newPos >= 0 and newPos <= self.audio.getnframes():
+                self.audio.setPos(newPos)
 
         def getPos(self):
-            return int(self.video.tell() * 1000000 / self.video.getframerate())
+            return int(self.audio.tell() * 1000000 / self.audio.getframerate())
 
         def canSeek(self):
-            return self.stream is not None and self.video.canSeek
+            return self.stream is not None and self.audio.canSeek
 
         def stop(self):
             self.stream.close()
-            self.video.close()
+            self.audio.close()
             self.stream = None
 
         def run(self):
@@ -867,7 +867,7 @@ class Player:
                 while self.stream is None or self.stream.is_stopped():
                     self.cond.wait()
 
-                data = self.video.read()
+                data = self.audio.read()
                 if data:
                     self.stream.write(self.process(data))
                     self.update()
@@ -949,14 +949,14 @@ class Player:
             self.playlist = playlist.audios
             self.playlistInfo = playlist
             for item in self.playlist:
-                FileManager.fetchVideo(item.id)
+                FileManager.fetchAudio(item.id)
             self.updateProps()
             Playlist.props['ActivePlaylist'] = dbus.Struct((dbus.Boolean(True), playlist.mprisFormat()))
 
             self.MpYt.dbusInterface.PlaylistChanged(playlist.mprisFormat())
             self.MpYt.dbusInterface.TrackListReplaced(
-                    dbus.Array([dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(i)) for i in range(len(self.playlist))]),
-                    dbus.ObjectPath(DBusInterface.PATH + '/video/0'))
+                    dbus.Array([dbus.ObjectPath(DBusInterface.PATH + '/audio/' + str(i)) for i in range(len(self.playlist))]),
+                    dbus.ObjectPath(DBusInterface.PATH + '/audio/0'))
 
         if autoPlay:
             self.play()
@@ -1093,20 +1093,20 @@ class Player:
 
     def processCallback(self, data):
         # XXX: Not so appropriate?
-        return audioop.mul(data, self._player.video.getsampwidth(), self.props["Volume"])
+        return audioop.mul(data, self._player.audio.getsampwidth(), self.props["Volume"])
 
     def _spawn(self):
         self.logger.debug('_spawn')
 
         try:
-            videoId = self.playlist[self.idx].id
-            video = FileManager.getVideo(videoId)
-            metadata = APIService.getMetadata(videoId)
+            audioId = self.playlist[self.idx].id
+            audio = FileManager.getAudio(audioId)
+            metadata = APIService.getMetadata(audioId)
 
             self.props["Metadata"] = {
-                    "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/video/' + str(self.idx), variant_level=1),
+                    "mpris:trackid": dbus.ObjectPath(DBusInterface.PATH + '/audio/' + str(self.idx), variant_level=1),
                     "mpris:artUrl": dbus.UTF8String(metadata["thumbnail"], variant_level=1),
-                    "mpris:length": dbus.Int64(video.getnframes() / video.getframerate() * 1000000, variant_level=1),
+                    "mpris:length": dbus.Int64(audio.getnframes() / audio.getframerate() * 1000000, variant_level=1),
                     "xesam:title": dbus.UTF8String(metadata["title"], variant_level=1),
                     "xesam:album": dbus.UTF8String(self.playlistInfo.title.encode('utf-8'), variant_level=1)
             }
@@ -1114,10 +1114,10 @@ class Player:
                 self.props["Metadata"]["xesam:artist"] = dbus.Array([dbus.UTF8String(s) for s in metadata['artist']])
             self.props["Position"] = 0L
             self.props["PlaybackStatus"] = 'Playing'
-            self._player.playAudio(video)
+            self._player.playAudio(audio)
         except:
             traceback.print_exc()
-            self.logger.warning("Something bad happened! Skipping this video instead.")
+            self.logger.warning("Something bad happened! Skipping this audio instead.")
             self.finishCallback()
 
     def _stop(self):
