@@ -62,8 +62,6 @@ class Config:
         config['warningLog'] = True
         config['debugLog'] = True
 
-        config['cacheFormat'] = 'wav'
-
         try:
             with open(Config.CONFIGFILE, 'r') as fin:
                 for line in fin.readlines():
@@ -296,7 +294,7 @@ class APIService:
 class FileManager:
 
     ONLINE_EXT = 'online'
-    EXTENTIONS = ['mp3', 'wav']
+    EXTENTIONS = ['mp3', 'm4a', 'wav', 'ogg', 'oga']
     DOWNLOAD_URI = 'http://www.youtube.com/watch?v=%s'
 
     lock = threading.Lock()
@@ -333,10 +331,10 @@ class FileManager:
                 prog = [
                     'youtube-dl',
                     '--quiet',
-                    '--prefer-free-formats',
+                    '-f', '172/140/43',
                     FileManager.DOWNLOAD_URI % self.audioId,
                     '-o', os.path.join(config.storageDir, '%(id)s.%(ext)s'),
-                    '-x', '--audio-format', config.cacheFormat]
+                    '-x']
                 code = subprocess.call(prog, stdout=FileManager.fnull, stderr=FileManager.fnull, close_fds=True)
 
                 if code == 0:
@@ -374,7 +372,7 @@ class FileManager:
                 os.mkfifo(dlPath)
                 os.mkfifo(cvPath)
 
-                dlProg = ['youtube-dl', '--quiet', '--max-quality', '140', '--prefer-free-formats', path, '-o', dlPath]
+                dlProg = ['youtube-dl', '--quiet', '-f', '172/140/43', path, '-o', dlPath]
                 cvProg = ['avconv', '-y', '-i', dlPath, cvPath]
                 self.dlChild = subprocess.Popen(dlProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
                 self.cvChild = subprocess.Popen(cvProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
@@ -396,8 +394,8 @@ class FileManager:
                 if fileType == 'wav':
                     self.logger.info("Init with wav file")
 
-                elif fileType == 'mp3':
-                    self.logger.info("Init with mp3 file (convert to wav)")
+                else:
+                    self.logger.info("Init with %s file (convert to wav)" % fileType)
 
                     wavePath = os.path.join(config.runtimeDir, '.tmp.wav')
                     code = subprocess.call(['avconv', '-y', '-i', path, wavePath], stdout=FileManager.fnull, stderr=FileManager.fnull)
@@ -405,9 +403,6 @@ class FileManager:
                         raise RuntimeError("Can't convert file `%s'" % path)
                     else:
                         path = wavePath
-
-                else:
-                    raise ValueError('What is this?')
 
                 self.audio = wave.open(path, 'rb')
                 self.getsampwidth = self.audio.getsampwidth
@@ -1146,7 +1141,7 @@ class MprisYoutube:
                 Identity='mpris-youtube',
                 #DesktopEntry='What is this?',
                 SupportedUriSchemes=dbus.Array(signature='s'), # can't open uri from outside
-                SupportedMimeTypes=['audio/wav', 'audio/mpeg'])
+                SupportedMimeTypes=['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg'])
 
     def run(self):
         self.userInterface.start()
