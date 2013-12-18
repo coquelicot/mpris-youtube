@@ -1,3 +1,4 @@
+S. indicator can't display metadata when init from online stream??
 1. update metadata when file fetched?
 2. change to local file when file fetched?
 3. fix bug of pyaudio underrun.
