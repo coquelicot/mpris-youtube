@@ -378,8 +378,10 @@ class FileManager:
                 cvProg = ['avconv', '-y', '-i', dlPath, cvPath]
                 self.dlChild = subprocess.Popen(dlProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
                 self.cvChild = subprocess.Popen(cvProg, stderr=FileManager.fnull, stdout=FileManager.fnull)
+                self.logger.debug("Init dlChild & cvChild")
 
                 self.video = mad.MadFile(cvPath)
+                self.logger.debug("Init madfile")
                 self.getsampwidth = lambda: 2 # verify me
                 self.getnchannels = lambda: 1 if self.video.mode == mad.MODE_SINGLE_CHANNEL else 2 # verify me!
                 self.getnframes = lambda: 0
@@ -415,6 +417,8 @@ class FileManager:
                 self.read = lambda: self.video.readframes(1024)
                 self.tell = self.video.tell
                 self.setPos = self.video.setpos
+
+            self.logger.debug('Finish init video.')
 
         def close(self):
             if not self.closed:
