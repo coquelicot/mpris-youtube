@@ -184,6 +184,7 @@ class APIService:
             cls.OPENCC_INST.od = cls.OPENCC_INST.libopencc.opencc_open(0) # hack for bug of opencc..
             cls.OPENCC_INST.dict_load('simp_to_trad_characters.ocd', opencc.DictType.DATRIE)
             cls.OPENCC_INST.dict_load('simp_to_trad_phrases.ocd', opencc.DictType.DATRIE)
+            cls.OPENCC_INST.dict_load('simp2trad.txt', opencc.DictType.TEXT)
         return cls.OPENCC_INST
 
     @classmethod
